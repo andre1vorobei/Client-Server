@@ -78,6 +78,8 @@ int main(int argc, char* argv[]){
     std::cout << A->message << std::endl;
     send(sock, A, A->len, 0);
     
+
+    sleep(3);
     close(sock);
 
     return 0;
