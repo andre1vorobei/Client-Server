@@ -8,6 +8,10 @@
 #include<thread>
 #include <mutex>
 #include <vector>
+#include <atomic>
+
+
+
 
 struct Command{
     unsigned short len;
@@ -21,9 +25,12 @@ struct Command{
 struct RecvMessage{
     std::string sender_username;
     std::string message;
+    unsigned int message_ID;
 };
 
+static std::atomic<bool> finish_the_program(false);
 
+// отправить сообщение
 void send_message(int sock, unsigned int m_ID){
 
     Command *A = (Command*)malloc(24);
@@ -49,16 +56,16 @@ void send_message(int sock, unsigned int m_ID){
 
     
     A->len = (strlen(s_buff)+1)+24;
-    std::cout << A->len <<std::endl;
-    std::cout << A->message <<std::endl;
 
     A->type = 0;
     A->message_ID = m_ID;
 
     send(sock, A, A->len, 0);
+    std::cout << std::endl;
 
 }
 
+// получать сообщения
 void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
     struct sockaddr_in addr;
     struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd)*1);
@@ -70,8 +77,9 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
     int bytes_read;
 
     std::mutex _mutex;
-    while(1){
-        ready = poll(pfds, 1, -1);
+    while(!finish_the_program){
+
+        ready = poll(pfds, 1, 1);
 
         if (ready == -1){
             perror("poll");
@@ -90,17 +98,10 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
 
             r_mess.sender_username = data->dst_username;
             r_mess.message = data->message;
+            r_mess.message_ID = data->message_ID;
 
             recv_messages->push_back(r_mess);
             _mutex.unlock();
-
-            // std::cout << bytes_read << std::endl;
-            // std::cout << data->len << std::endl;
-            // std::cout << data->type << std::endl;
-            // std::cout << data->message_ID << std::endl;
-            // std::cout << data->src_username << std::endl;
-            // std::cout << data->dst_username << std::endl;
-            // std::cout << data->message << std::endl;
 
             delete data;
             data = nullptr;
@@ -110,9 +111,10 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
     }
 }
 
+//просмотреть полученные сообщения
 void read_messages(std::vector<RecvMessage> *recv_messages){
     for(RecvMessage i: *(recv_messages)){
-        std::cout << i.sender_username <<": " << i.message << std::endl << std::endl;
+        std::cout << "messageID: " << i.message_ID << "\n" << i.sender_username <<": " << i.message << std::endl << std::endl;
     }
 }
 
@@ -128,6 +130,7 @@ void menu(int sock, std::vector<RecvMessage> *recv_messages){
 
         std::cout << "choose an action: ";
         std::cin >>act;
+        std::cout << std::endl;
 
         switch (act)
         {
@@ -145,6 +148,7 @@ void menu(int sock, std::vector<RecvMessage> *recv_messages){
         case(0):{
             close(sock);
             ex = 1;
+            finish_the_program = true;
             break;
         }
 
@@ -183,6 +187,7 @@ int main(int argc, char* argv[]){
     std::vector<RecvMessage> recv_messages;
     std::thread t1{recv_messages_in_thread, sock, &recv_messages};
     menu(sock, &recv_messages);
-
+    
+    t1.join();
     return 0;
 }
