@@ -1,7 +1,9 @@
 #include<iostream>
+#include<string>
 #include<sys/types.h>
 #include<sys/socket.h>
 #include<netinet/in.h>
+#include <arpa/inet.h>
 #include<unistd.h>
 #include<poll.h>
 #include<string.h>
@@ -9,6 +11,7 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+#include <limits>
 
 
 
@@ -31,31 +34,42 @@ struct RecvMessage{
 static std::atomic<bool> finish_the_program(false);
 
 // отправить сообщение
-void send_message(int sock, unsigned int m_ID){
+void send_message(int sock,char *SRC, unsigned int m_ID){
 
     Command *A = (Command*)malloc(24);
     
-    char message_buff[1000];
-    char s_buff[8];
-    std::cout << "SRC: ";
-    std::cin.ignore();
-    std::cin.getline(s_buff, 8);
+    char s_buff[1000];
+    std::string str_buff;
     
-    // std::cout<< strlen(s_buff)<<std::endl;
-    memcpy(A->src_username, s_buff, sizeof(A->src_username));
+    memcpy(A->src_username, SRC, 8);
 
+    
     std::cout << "DST: ";
-    std::cin.getline(s_buff, 8);
-    memcpy(A->dst_username, s_buff, sizeof(A->dst_username));
+    std::cin.ignore();
+    getline(std::cin, str_buff);
 
+    while(str_buff.length()>7 || str_buff.length()==0){
+        std::cout <<( str_buff.length()==0 ? "Username cant be empty" : "Too long username, try again") << std::endl;
+        std::cout << "DST: ";
+        getline(std::cin, str_buff);
+    }
+    memcpy(A->dst_username, str_buff.c_str(), 8);
+
+ 
     std::cout << "Message: ";
-    std::cin.getline(s_buff, 1000);
-    A = (Command*)realloc(A, 24+(strlen(s_buff)+1));
-    memcpy(A->message, s_buff, strlen(s_buff)+1);
+    getline(std::cin, str_buff);
+     while(str_buff.length()>999 || str_buff.length()==0){
+        std::cout << (str_buff.length()==0 ? "Message cant be empty" : "Too long message, try again") << std::endl;
+        std::cout << "Message: ";
+        getline(std::cin, str_buff);
+    }
 
-
+    A = (Command*)realloc(A, 24+str_buff.length()+1);
     
-    A->len = (strlen(s_buff)+1)+24;
+    memcpy(A->message, str_buff.c_str(), str_buff.length()+1);
+    std::cout <<  str_buff.length()+1 << " " << str_buff << std::endl;
+
+    A->len = ((str_buff.length()+1)+24);
 
     A->type = 0;
     A->message_ID = m_ID;
@@ -83,7 +97,7 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
 
         if (ready == -1){
             perror("poll");
-            exit(2);
+            exit(3);
         }
         else if(pfds[0].revents & POLLIN){
 
@@ -119,7 +133,7 @@ void read_messages(std::vector<RecvMessage> *recv_messages){
 }
 
 
-void menu(int sock, std::vector<RecvMessage> *recv_messages){
+void menu(int sock, std::vector<RecvMessage> *recv_messages, char *src_username){
     int act;
     int m_ID = 1;
     bool ex = 0 ;
@@ -130,13 +144,14 @@ void menu(int sock, std::vector<RecvMessage> *recv_messages){
 
         std::cout << "choose an action: ";
         std::cin >>act;
+        std::cin.clear();
         std::cout << std::endl;
 
         switch (act)
         {
         case(1):{
             /* code */
-            send_message(sock, m_ID);
+            send_message(sock,src_username, m_ID);
             m_ID++;
             break;
         }
@@ -164,6 +179,26 @@ void menu(int sock, std::vector<RecvMessage> *recv_messages){
 
 int main(int argc, char* argv[]){
     
+    std::cout  << argc << std::endl;
+    
+    if((argc != 4) || (strlen(argv[1])>7) ){
+        std::cout << "wrong arguments" << std::endl;
+        perror("enter");
+        exit(4);
+    }
+
+    //данные для подключения
+    char src_username[8];
+    char* p_end;
+    memcpy(src_username, argv[1],8);
+    int ip = inet_addr( argv[2] );
+    int port = htons(strtol(argv[3], &p_end, 10));
+    
+    if(strlen(p_end)!=0){
+        perror("enter");
+        exit(4);
+    }
+    
     int sock;
     struct sockaddr_in addr;
 
@@ -175,8 +210,10 @@ int main(int argc, char* argv[]){
     }
 
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(6666); 
-    addr.sin_addr.s_addr = htonl((192<<24)+(168<<16)+(10<<8)+126);
+    // addr.sin_port = htons(6666); 
+    // addr.sin_addr.s_addr = htonl((192<<24)+(168<<16)+(10<<8)+126);
+    addr.sin_port = port; 
+    addr.sin_addr.s_addr = ip;
     
     if(connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
@@ -186,7 +223,7 @@ int main(int argc, char* argv[]){
 
     std::vector<RecvMessage> recv_messages;
     std::thread t1{recv_messages_in_thread, sock, &recv_messages};
-    menu(sock, &recv_messages);
+    menu(sock, &recv_messages, src_username);
     
     t1.join();
     return 0;

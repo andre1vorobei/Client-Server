@@ -28,11 +28,10 @@ struct ClientInfo{
 int main()
 {
     int listener;// слушающий сокет
-    int sock;//сокеты клиентов
+    int sock;//сокет буфер?
     int bytes_read; // кол-во считанных байт командой recv
     unsigned short num_connections = 1;//кол-во подключенных клиентов, всегда равени минимум 1, т.к. в общее кол-во подключений включаем слушающий сокет
-    unsigned int num_unind_user = 1; //для идентификации неопознанных клиентов
-
+    unsigned int num_unind_user = 1; //для нумерации неопознанных клиентов
 
 
     std::unordered_map<std::string, ClientInfo> clients;
@@ -130,6 +129,7 @@ int main()
 
 
                         //ТЕСТ
+                        data->message_ID = 4;
                         send(sock, data, data->len, 0);
 
                         delete data;
