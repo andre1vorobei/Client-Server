@@ -110,7 +110,7 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
 
             bytes_read = recv(sock, data->message, data->len-24, 0);
 
-            r_mess.sender_username = data->dst_username;
+            r_mess.sender_username = data->src_username;
             r_mess.message = data->message;
             r_mess.message_ID = data->message_ID;
 
