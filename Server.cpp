@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include<string.h>
 #include <fstream>
+#include <sys/timerfd.h>
 
 
 #define SWAP(type, a, b) type tmp = a; a = b; b = tmp;
@@ -22,9 +23,8 @@ struct Command{
 };
 
 struct ClientInfo{
-    short *revents;
-    int *c_socket;
-    int *c_timer;
+    int c_socket_pos;
+    int c_timer_pos;
 };
 
 int main()
@@ -32,11 +32,12 @@ int main()
     int listener;// слушающий сокет
     int sock;//сокет буфер?
     int bytes_read; // кол-во считанных байт командой recv
-    unsigned short num_connections = 1;//кол-во подключенных клиентов, всегда равени минимум 1, т.к. в общее кол-во подключений включаем слушающий сокет
+    unsigned short num_connections = 1;//кол-во подключений, всегда равени минимум 1, т.к. в общее кол-во включен слушающий сокет
     unsigned int num_unind_user = 1; //для нумерации неопознанных клиентов
 
 
     std::unordered_map<std::string, ClientInfo> clients;
+    std::unordered_map<int, std::string> sock_x_name;
 
     struct sockaddr_in addr;
     struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd)*1);
@@ -69,7 +70,7 @@ int main()
     
     while(1)
     {
-        ready = poll(pfds, num_connections, -1);
+        ready = poll(pfds, num_connections*2-1, -1);
         
         printf("About to poll()\n");
 
@@ -83,55 +84,84 @@ int main()
             sock = accept(listener, NULL, NULL);
 
             num_connections++;
-            pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*num_connections);
-            pfds[num_connections-1].fd = sock;
-            pfds[num_connections-1].events = POLLIN | POLLRDHUP;
+
+            pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*num_connections*2-1);
+            pfds[num_connections*2-3].fd = sock;
+            pfds[num_connections*2-3].events = POLLIN | POLLRDHUP;
+            pfds[num_connections*2-2].fd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
+            pfds[num_connections*2-2].events = POLLIN;
             pfds[0].revents = 0;
 
-            clients["unind_user"+std::to_string(num_unind_user)].c_socket = &pfds[num_connections-1].fd;
-            clients["unind_user"+std::to_string(num_unind_user)].revents = &pfds[num_connections-1].revents;
+            clients["unind_user_"+std::to_string(num_unind_user)].c_socket_pos = num_connections*2-3;
+
+            clients["unind_user_"+std::to_string(num_unind_user)].c_timer_pos = num_connections*2-2;
+
+            sock_x_name[sock] = "unind_user_"+std::to_string(num_unind_user);
+
+
             num_unind_user++;
         }
         else{
             
             for (const auto& [client_src_name, client_data] : clients){
                     printf("  fd=%s; events: %s%s%s%s\n", client_src_name.c_str(),
-                    (*(client_data.revents) & POLLHUP) ? "POLLHUP " : "",
-                    (*(client_data.revents) & POLLRDHUP)  ? "POLLRDHUP "  : "",
-                    (*(client_data.revents) & POLLIN)  ? "POLLIN "  : "",
-                    (*(client_data.revents) & POLLERR) ? "POLLERR " : "");
+                    (pfds[client_data.c_socket_pos].revents & POLLHUP) ? "POLLHUP " : "",
+                    (pfds[client_data.c_socket_pos].revents & POLLRDHUP)  ? "POLLRDHUP "  : "",
+                    (pfds[client_data.c_socket_pos].revents  & POLLIN)  ? "POLLIN "  : "",
+                    (pfds[client_data.c_socket_pos].revents  & POLLERR) ? "POLLERR " : "");
 
-                    if(*(client_data.revents) & POLLRDHUP){
+                    if(pfds[client_data.c_socket_pos].revents & POLLRDHUP){
                         std::cout << "User "<< client_src_name << " disconnected" << std:: endl;
-                        num_connections--;
-                        close(*(client_data.c_socket));
-                        *(client_data.revents) = 0;
+
+                        close(pfds[client_data.c_socket_pos].fd);
+                        pfds[client_data.c_socket_pos].revents = 0;
+
+                        close(pfds[client_data.c_timer_pos].fd);
+                        pfds[client_data.c_timer_pos].revents = 0;
+
+                        clients[sock_x_name[pfds[num_connections*2-3].fd]].c_socket_pos = client_data.c_socket_pos;
+                        clients[sock_x_name[pfds[num_connections*2-2].fd]].c_timer_pos = client_data.c_timer_pos;
+
+                        sock_x_name.erase(pfds[num_connections*2-3].fd);
+                        // pollfd poll_tmp;
+
+                        // poll_tmp = pfds[client_data.c_socket_pos];
+                        pfds[client_data.c_socket_pos] = pfds[num_connections*2-3];
+                        pfds[client_data.c_timer_pos] = pfds[num_connections*2-2];
+                        
+                        
                         
                         clients.erase(client_src_name);
+                        
+                        pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*num_connections*2-1);
+
+                        num_connections--;
+
                         break;
                     }
-                    else if(*(client_data.revents) & POLLIN){
+                    else if(pfds[client_data.c_socket_pos].revents & POLLIN){
                         std::cout << client_src_name << std::endl;
 
                         data = (Command*)malloc(24); // для приема сообщения
                     
-                        bytes_read = recv(*(client_data.c_socket), data, 24, 0); // принимаем заголовок
+                        bytes_read = recv(pfds[client_data.c_socket_pos].fd, data, 24, 0); // принимаем заголовок
 
                         data = (Command*)realloc(data, data->len);// выделяем память под сообщение
 
-                        bytes_read = recv(*(client_data.c_socket), data->message, data->len-24, 0);// считываем сообщение
+                        bytes_read = recv(pfds[client_data.c_socket_pos].fd, data->message, data->len-24, 0);// считываем сообщение
 
                         // std::cout << bytes_read << std::endl;
                         // std::cout << data->len << std::endl;
                         // std::cout << data->type << std::endl;
                         // std::cout << data->message_ID << std::endl;
-                        // std::cout << data->src_username << std::endl;
-                        // std::cout << data->dst_username << std::endl;
-                        // std::cout << data->message << std::endl;
+                        std::cout << "SRC: " << data->src_username << std::endl;
+                        std::cout << "DST: " << data->dst_username << std::endl;
+                        std::cout << "MESSAGE: " << data->message << std::endl;
+                        
 
 
                         if(clients.count(data->dst_username)){
-                            std::cout <<client_src_name << " -> " << data->dst_username << ": message sended, bytes " << send(*(clients[data->dst_username].c_socket), data, data->len, 0) << std::endl;
+                            std::cout <<client_src_name << " -> " << data->dst_username << ": message sended, bytes " << send(pfds[clients[data->dst_username].c_socket_pos].fd, data, data->len, 0) << std::endl;
                         }
                         else{
                             std::cout <<client_src_name << " -> " << data->dst_username << ": the recipient is offline"<< std::endl;
@@ -144,7 +174,7 @@ int main()
 
                             memcpy(data->message, "300", 4);
                             data->len = 28;
-                            send(*(client_data.c_socket), data, data->len, 0);
+                            send(pfds[clients[client_src_name].c_socket_pos].fd, data, data->len, 0);
                         
                             for(int i = 0; i < 8; i++){
                                 SWAP(char, data->dst_username[i], data->src_username[i]);
@@ -152,10 +182,13 @@ int main()
                         }
                         
                         if(data->src_username != client_src_name){
-                            *(client_data.revents) = 0;
-                            clients[data->src_username].c_socket = client_data.c_socket;
-                            clients[data->src_username].c_timer = client_data.c_timer;
-                            clients[data->src_username].revents = client_data.revents;
+                            pfds[clients[data->src_username].c_socket_pos].revents = 0;
+                            sock_x_name.erase(pfds[client_data.c_socket_pos].fd);
+                            
+                            clients[data->src_username].c_socket_pos = client_data.c_socket_pos;
+                            clients[data->src_username].c_timer_pos = client_data.c_timer_pos;
+
+                            sock_x_name[pfds[client_data.c_socket_pos].fd] = data->src_username;
                             clients.erase(client_src_name);
 
                             delete data;
@@ -166,121 +199,12 @@ int main()
 
                             delete data;
                             data = nullptr;
-                            *(client_data.revents) = 0;
+                            pfds[client_data.c_socket_pos].revents = 0;
                         }
                     }
             }
-            // for(int i = 1; i < num_connections; i++){
-            //     printf("  fd=%d; events: %s%s%s%s\n", pfds[i].fd,
-                
-            //     (pfds[i].revents & POLLHUP) ? "POLLHUP " : "",
-            //     (pfds[i].revents & POLLRDHUP)  ? "POLLRDHUP "  : "",
-            //     (pfds[i].revents & POLLIN)  ? "POLLIN "  : "",
-            //     (pfds[i].revents & POLLERR) ? "POLLERR " : "");
-
-            //     if(pfds[i].revents & POLLRDHUP){
-            //         std::cout << i << "Отключился" << std:: endl;
-            //         pfds[i].revents = 0;
-            //     }
-            //     else if(pfds[i].revents & POLLIN){
-            //         std::cout << "sock" << i << std::endl;
-            //         Command *data = (Command*)malloc(24);
-                
-            //         bytes_read = recv(pfds[i].fd, data, 24, 0);
-
-            //         std::cout << (pfds[i].revents & POLLHUP )  << std::endl;
-            //         std::cout << (pfds[i].revents & POLLRDHUP)<< std::endl;
-
-            //         data = (Command*)realloc(data, data->len);
-
-            //         bytes_read = recv(pfds[i].fd, data->message, data->len-24, 0);
-
-            //         std::cout << bytes_read << std::endl;
-            //         std::cout << data->len << std::endl;
-            //         std::cout << data->type << std::endl;
-            //         std::cout << data->message_ID << std::endl;
-            //         std::cout << data->src_username << std::endl;
-            //         std::cout << data->dst_username << std::endl;
-            //         std::cout << data->message << std::endl;
-            //         delete data;
-            //         data = nullptr;
-            //         pfds[i].revents = 0;
-            //     }
-            // }
         }
-
         std::cout << "end\n" << std::endl;
-
-        // printf("Ready: %d\n", ready);
-
-        // if(pfds[0].revents & POLLIN){
-        //     std::cout << "ZAEBIS" << std::endl;
-        // }
-
-        /* Deal with array returned by poll() */
-
-        // for (int j = 0; j < num_connections; j++) {
-        //     char buf[10];
-
-        //     if (pfds[j].revents != 0) {
-        //         printf("  fd=%d; events: %s%s%s\n", pfds[j].fd,
-        //                 (pfds[j].revents & POLLIN)  ? "POLLIN "  : "",
-        //                 (pfds[j].revents & POLLHUP) ? "POLLHUP " : "",
-        //                 (pfds[j].revents & POLLERR) ? "POLLERR " : "");
-
-        //         if (pfds[j].revents & POLLIN) {
-        //             ssize_t s = read(pfds[j].fd, buf, sizeof(buf));
-        //             if (s == -1)
-        //                 errExit("read");
-        //             printf("    read %zd bytes: %.*s\n",
-        //                     s, (int) s, buf);
-        //         } else {                /* POLLERR | POLLHUP */
-        //             printf("    closing fd %d\n", pfds[j].fd);
-        //             if (close(pfds[j].fd) == -1)
-        //                 errExit("close");
-        //             num_open_fds--;
-        //         }
-        //     }
-        // }
-
-
-
-        
-        
-        
-        // if(sock < 0)
-        // {
-        //     perror("accept");
-        //     exit(3);
-        // }
-        // else{
-        //     std::cout << "sock is opened" << std::endl;
-        // }
-     
-        // Command *data = (Command*)malloc(24);
-    
-        // bytes_read = recv(sock, data, 24, 0);
-
-        // data = (Command*)realloc(data, data->len);
-
-        // bytes_read = recv(sock, data->message, data->len-24, 0);
-
-        // std::cout << bytes_read << std::endl;
-        // std::cout << data->len << std::endl;
-        // std::cout << data->type << std::endl;
-        // std::cout << data->message_ID << std::endl;
-        // std::cout << data->src_username << std::endl;
-        // std::cout << data->dst_username << std::endl;
-        // std::cout << data->message << std::endl;
-        
-
-        // close(sock);
-
-        // delete data;
-        // data = nullptr;
-        
-        // std::cout << "sock is closed" << std::endl;
-
     }
     std::cout << "ogg" << std::endl;
     return 0;
