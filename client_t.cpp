@@ -13,7 +13,7 @@
 #include <atomic>
 #include <limits>
 
-
+#define SWAP(type, a, b) type tmp = a; a = b; b = tmp;
 
 
 struct Command{
@@ -29,6 +29,7 @@ struct RecvMessage{
     std::string sender_username;
     std::string message;
     unsigned int message_ID;
+    unsigned short message_type;
 };
 
 static std::atomic<bool> finish_the_program(false);
@@ -113,9 +114,25 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
             r_mess.sender_username = data->src_username;
             r_mess.message = data->message;
             r_mess.message_ID = data->message_ID;
+            r_mess.message_type = data->type;
 
             recv_messages->push_back(r_mess);
             _mutex.unlock();
+
+            if(data->type == 0 ){
+                for(int i = 0; i < 8; i++){
+                    SWAP(char, data->dst_username[i], data->src_username[i]); //для отправки ответа клиенту отправителю от лица неподключенного клиента получателя 
+                }
+
+                data = (Command*)realloc(data, 28);//на заголовок и сообщение/ответ "200"
+
+                memcpy(data->message, "200", 4);
+                data->len = 28;
+                data->type = 1;
+                sleep(5);
+                send(sock, data, data->len, 0);
+
+            }
 
             delete data;
             data = nullptr;
@@ -128,7 +145,7 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
 //просмотреть полученные сообщения
 void read_messages(std::vector<RecvMessage> *recv_messages){
     for(RecvMessage i: *(recv_messages)){
-        std::cout << "messageID: " << i.message_ID << "\n" << i.sender_username <<": " << i.message << std::endl << std::endl;
+        std::cout<<"Message type: "<<i.message_type << "\n" << "Message ID: " << i.message_ID << "\n" << i.sender_username <<": " << i.message << std::endl << std::endl;
     }
 }
 

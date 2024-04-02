@@ -9,6 +9,7 @@
 #include<string.h>
 #include <fstream>
 #include <sys/timerfd.h>
+#include<queue>
 
 
 #define SWAP(type, a, b) type tmp = a; a = b; b = tmp;
@@ -25,6 +26,7 @@ struct Command{
 struct ClientInfo{
     int c_socket_pos;
     int c_timer_pos;
+    std::queue<int> timers_queue;
 };
 
 int main()
@@ -118,24 +120,21 @@ int main()
 
                         close(pfds[client_data.c_timer_pos].fd);
                         pfds[client_data.c_timer_pos].revents = 0;
-
+                        std::cout<<pfds[num_connections*2-3].fd<<std::endl;
                         clients[sock_x_name[pfds[num_connections*2-3].fd]].c_socket_pos = client_data.c_socket_pos;
-                        clients[sock_x_name[pfds[num_connections*2-2].fd]].c_timer_pos = client_data.c_timer_pos;
+                        clients[sock_x_name[pfds[num_connections*2-3].fd]].c_timer_pos = client_data.c_timer_pos;
+                        clients[sock_x_name[pfds[num_connections*2-3].fd]].timers_queue = client_data.timers_queue;
 
                         sock_x_name.erase(pfds[num_connections*2-3].fd);
-                        // pollfd poll_tmp;
 
-                        // poll_tmp = pfds[client_data.c_socket_pos];
                         pfds[client_data.c_socket_pos] = pfds[num_connections*2-3];
                         pfds[client_data.c_timer_pos] = pfds[num_connections*2-2];
                         
-                        
-                        
                         clients.erase(client_src_name);
                         
-                        pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*num_connections*2-1);
-
                         num_connections--;
+
+                        pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*num_connections*2-1);
 
                         break;
                     }
@@ -150,20 +149,41 @@ int main()
 
                         bytes_read = recv(pfds[client_data.c_socket_pos].fd, data->message, data->len-24, 0);// считываем сообщение
 
-                        // std::cout << bytes_read << std::endl;
-                        // std::cout << data->len << std::endl;
-                        // std::cout << data->type << std::endl;
-                        // std::cout << data->message_ID << std::endl;
+                        std::cout << "TYPE: " << data->type << std::endl;
                         std::cout << "SRC: " << data->src_username << std::endl;
                         std::cout << "DST: " << data->dst_username << std::endl;
                         std::cout << "MESSAGE: " << data->message << std::endl;
                         
 
-
-                        if(clients.count(data->dst_username)){
+                        if(clients.count(data->dst_username) && data->type == 0){
+                            int tmp_timer = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
+                             if (timerfd_settime(tmp_timer, 0, &timer_settings, 0) == -1){
+                                perror("poll");
+                                exit(2);
+                            }
                             std::cout <<client_src_name << " -> " << data->dst_username << ": message sended, bytes " << send(pfds[clients[data->dst_username].c_socket_pos].fd, data, data->len, 0) << std::endl;
+                            clients[data->dst_username].timers_queue.push(tmp_timer);
+                            pfds[clients[data->dst_username].c_timer_pos].fd = tmp_timer;
+                           
                         }
-                        else{
+
+                        else if(clients.count(data->dst_username) && data->type == 1){
+                            std::cout <<client_src_name << " -> " << data->dst_username << ": message sended, bytes " << send(pfds[clients[data->dst_username].c_socket_pos].fd, data, data->len, 0) << std::endl;
+                            
+                            close(clients[data->src_username].timers_queue.front());
+                            pfds[clients[data->src_username].c_timer_pos].revents = 0;
+
+                            clients[data->src_username].timers_queue.pop();
+                            
+                            if(!clients[data->src_username].timers_queue.empty()){
+                                pfds[clients[data->src_username].c_timer_pos].fd = clients[data->src_username].timers_queue.front();
+                            }
+                            else{
+                                pfds[clients[data->src_username].c_timer_pos].fd = -1;
+                            }
+                        }
+
+                        else if(!(clients.count(data->dst_username)) && data->type == 0){
                             std::cout <<client_src_name << " -> " << data->dst_username << ": the recipient is offline"<< std::endl;
 
                             for(int i = 0; i < 8; i++){
@@ -174,12 +194,15 @@ int main()
 
                             memcpy(data->message, "300", 4);
                             data->len = 28;
+                            data->type = 1;
                             send(pfds[clients[client_src_name].c_socket_pos].fd, data, data->len, 0);
                         
                             for(int i = 0; i < 8; i++){
                                 SWAP(char, data->dst_username[i], data->src_username[i]);
                             }
                         }
+
+                    
                         
                         if(data->src_username != client_src_name){
                             pfds[clients[data->src_username].c_socket_pos].revents = 0;
@@ -199,8 +222,35 @@ int main()
 
                             delete data;
                             data = nullptr;
-                            pfds[client_data.c_socket_pos].revents = 0;
+                            //pfds[client_data.c_socket_pos].revents = 0;
                         }
+                    }
+
+                    else if(pfds[client_data.c_timer_pos].revents & POLLIN){
+                        std::cout << "User "<< client_src_name << " disconnected" << std:: endl;
+
+                        close(pfds[client_data.c_socket_pos].fd);
+                        pfds[client_data.c_socket_pos].revents = 0;
+
+                        close(pfds[client_data.c_timer_pos].fd);
+                        pfds[client_data.c_timer_pos].revents = 0;
+                        std::cout<<pfds[num_connections*2-3].fd<<std::endl;
+                        clients[sock_x_name[pfds[num_connections*2-3].fd]].c_socket_pos = client_data.c_socket_pos;
+                        clients[sock_x_name[pfds[num_connections*2-3].fd]].c_timer_pos = client_data.c_timer_pos;
+                        clients[sock_x_name[pfds[num_connections*2-3].fd]].timers_queue = client_data.timers_queue;
+
+                        sock_x_name.erase(pfds[num_connections*2-3].fd);
+
+                        pfds[client_data.c_socket_pos] = pfds[num_connections*2-3];
+                        pfds[client_data.c_timer_pos] = pfds[num_connections*2-2];
+                        
+                        clients.erase(client_src_name);
+                        
+                        num_connections--;
+
+                        pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*num_connections*2-1);
+
+                        break;
                     }
             }
         }
