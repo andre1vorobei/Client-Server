@@ -27,6 +27,7 @@ struct ClientInfo{
     int c_socket_pos;
     int c_timer_pos;
     std::queue<int> timers_queue;
+    std::queue<Command> commands_queue;
 };
 
 int main()
@@ -90,7 +91,7 @@ int main()
             pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*num_connections*2-1);
             pfds[num_connections*2-3].fd = sock;
             pfds[num_connections*2-3].events = POLLIN | POLLRDHUP;
-            pfds[num_connections*2-2].fd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
+            pfds[num_connections*2-2].fd = -1;
             pfds[num_connections*2-2].events = POLLIN;
             pfds[0].revents = 0;
 
@@ -120,7 +121,12 @@ int main()
 
                         close(pfds[client_data.c_timer_pos].fd);
                         pfds[client_data.c_timer_pos].revents = 0;
-                        std::cout<<pfds[num_connections*2-3].fd<<std::endl;
+
+                        for(int i = 0; i < num_connections*2-1; i++){
+                            std::cout<<pfds[i].fd<< " ";
+                        }
+                        std::cout << std::endl;
+
                         clients[sock_x_name[pfds[num_connections*2-3].fd]].c_socket_pos = client_data.c_socket_pos;
                         clients[sock_x_name[pfds[num_connections*2-3].fd]].c_timer_pos = client_data.c_timer_pos;
                         clients[sock_x_name[pfds[num_connections*2-3].fd]].timers_queue = client_data.timers_queue;
@@ -131,8 +137,14 @@ int main()
                         pfds[client_data.c_timer_pos] = pfds[num_connections*2-2];
                         
                         clients.erase(client_src_name);
+
                         
                         num_connections--;
+
+                        for(int i = 0; i < num_connections*2-1; i++){
+                            std::cout<<pfds[i].fd<< " ";
+                        }
+                        std::cout << std::endl;
 
                         pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*num_connections*2-1);
 
@@ -163,7 +175,9 @@ int main()
                             }
                             std::cout <<client_src_name << " -> " << data->dst_username << ": message sended, bytes " << send(pfds[clients[data->dst_username].c_socket_pos].fd, data, data->len, 0) << std::endl;
                             clients[data->dst_username].timers_queue.push(tmp_timer);
-                            pfds[clients[data->dst_username].c_timer_pos].fd = tmp_timer;
+                            if(pfds[clients[data->dst_username].c_timer_pos].fd == -1) {
+                               pfds[clients[data->dst_username].c_timer_pos].fd = tmp_timer;
+                            }
                            
                         }
 

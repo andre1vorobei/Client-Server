@@ -91,6 +91,8 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
     int ready;
     int bytes_read;
 
+    int tmp = 0;//УБРАТЬ
+
     std::mutex _mutex;
     while(!finish_the_program){
 
@@ -129,7 +131,8 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
                 memcpy(data->message, "200", 4);
                 data->len = 28;
                 data->type = 1;
-                sleep(5);
+
+
                 send(sock, data, data->len, 0);
 
             }
