@@ -199,8 +199,6 @@ void menu(int sock, std::vector<RecvMessage> *recv_messages, char *src_username)
 
 int main(int argc, char* argv[]){
     
-    std::cout  << argc << std::endl;
-    
     if((argc != 4) || (strlen(argv[1])>7) ){
         std::cout << "wrong arguments" << std::endl;
         perror("enter");
