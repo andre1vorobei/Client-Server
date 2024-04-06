@@ -154,33 +154,43 @@ void read_messages(std::vector<RecvMessage> *recv_messages){
 
 
 void menu(int sock, std::vector<RecvMessage> *recv_messages, char *src_username){
+    std::string act_buff;
     int act;
     int m_ID = 1;
     bool ex = 0 ;
+    char *end_p;
     while(ex!=1){
         std::cout << "1 - send message" << std::endl;
         std::cout << "2 - read the recv message" << std::endl;
         std::cout << "0 - exit" << std::endl;
 
         std::cout << "choose an action: ";
-        std::cin >>act;
-        std::cin.clear();
-        std::cout << std::endl;
+        std::cin >>act_buff;
+        act = strtol(act_buff.c_str(), &end_p, 10);
+        while(strlen(end_p)!=0){
+            std::cout << "wrong enter, try again"<<std::endl;
+            std::cout << "choose an action: ";
+            std::cin >>act_buff;
+            act = strtol(act_buff.c_str(), &end_p, 10);
+        }
+
+        
 
         switch (act)
         {
         case(1):{
-            /* code */
+            //отправить сообщение
             send_message(sock,src_username, m_ID);
             m_ID++;
             break;
         }
         case(2):{
-            /* прочитать сообщения из переменной */
+            //вывести все полученные сообщения
             read_messages(recv_messages);
             break;
         }
         case(0):{
+            //отключиться
             close(sock);
             ex = 1;
             finish_the_program = true;
@@ -188,7 +198,7 @@ void menu(int sock, std::vector<RecvMessage> *recv_messages, char *src_username)
         }
 
         default:
-            std::cout << "wrong enter" <<std::endl; 
+            std::cout << "wrong enter\n" <<std::endl; 
             break;
         }
 
@@ -228,8 +238,6 @@ int main(int argc, char* argv[]){
     }
 
     addr.sin_family = AF_INET;
-    // addr.sin_port = htons(6666); 
-    // addr.sin_addr.s_addr = htonl((192<<24)+(168<<16)+(10<<8)+126);
     addr.sin_port = port; 
     addr.sin_addr.s_addr = ip;
     
@@ -240,7 +248,9 @@ int main(int argc, char* argv[]){
     }
 
     std::vector<RecvMessage> recv_messages;
+    //Получать сообзения в отделюном потоке
     std::thread t1{recv_messages_in_thread, sock, &recv_messages};
+
     menu(sock, &recv_messages, src_username);
     
     t1.join();
