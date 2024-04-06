@@ -1,3 +1,5 @@
+//Запуск сервера: в командной строке указать сначала свой айпи, затем порт
+
 #include<iostream>
 #include<fstream>
 #include<sys/types.h>
@@ -112,11 +114,11 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
 int main(int argc, char* argv[])
 {
 
-    // if(argc != 3 ){
-    //     std::cout << "wrong arguments" << std::endl;
-    //     perror("enter");
-    //     exit(4);
-    // }
+    if(argc != 3 ){
+        std::cout << "wrong arguments" << std::endl;
+        perror("enter");
+        exit(4);
+    }
 
     int listener;// слушающий сокет
     // int sock;//сокет буфер?
@@ -143,15 +145,15 @@ int main(int argc, char* argv[])
     }
     
     addr.sin_family = AF_INET;
-    // addr.sin_addr.s_addr = inet_addr( argv[1] );
-    // addr.sin_port = htons(strtol(argv[2], &p_end, 10));
-    addr.sin_addr.s_addr = inet_addr( "192.168.10.126");
-    addr.sin_port = htons(6667);
+    addr.sin_addr.s_addr = inet_addr( argv[1] );
+    addr.sin_port = htons(strtol(argv[2], &p_end, 10));
+    // addr.sin_addr.s_addr = inet_addr( "192.168.10.126");
+    // addr.sin_port = htons(6667);
 
-    // if(strlen(p_end)!=0){
-    //     perror("enter");
-    //     exit(4);
-    // }
+    if(strlen(p_end)!=0){
+        perror("enter");
+        exit(4);
+    }
     
     if(bind(listener, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
