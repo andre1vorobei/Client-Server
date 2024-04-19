@@ -45,7 +45,6 @@ void send_message(int sock,char *SRC, unsigned int m_ID){
     
     memcpy(A->src_username, SRC, 8);
 
-    
     std::cout << "DST: ";
     std::cin.ignore();
     getline(std::cin, str_buff);
@@ -56,11 +55,10 @@ void send_message(int sock,char *SRC, unsigned int m_ID){
         getline(std::cin, str_buff);
     }
     memcpy(A->dst_username, str_buff.c_str(), 8);
-
  
     std::cout << "Message: ";
     getline(std::cin, str_buff);
-     while(str_buff.length()>999 || str_buff.length()==0){
+    while(str_buff.length()>999 || str_buff.length()==0){
         std::cout << (str_buff.length()==0 ? "Message cant be empty" : "Too long message, try again") << std::endl;
         std::cout << "Message: ";
         getline(std::cin, str_buff);
@@ -69,10 +67,7 @@ void send_message(int sock,char *SRC, unsigned int m_ID){
     A = (Command*)realloc(A, 24+str_buff.length()+1);
     
     memcpy(A->message, str_buff.c_str(), str_buff.length()+1);
-    std::cout <<  str_buff.length()+1 << " " << str_buff << std::endl;
-
     A->len = ((str_buff.length()+1)+24);
-
     A->type = 0;
     A->message_ID = m_ID;
 
@@ -102,11 +97,8 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
         else if(pfds[0].revents & POLLIN){
 
             Command *data = (Command*)malloc(24);
-                    
             bytes_read = recv(sock, data, 24, 0);
-
             data = (Command*)realloc(data, data->len);
-
             bytes_read = recv(sock, data->message, data->len-24, 0);
 
             r_mess.sender_username = data->src_username;
@@ -116,7 +108,7 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
 
             if(data->type == 0 ){
                 for(int i = 0; i < 8; i++){
-                    std::swap(data->dst_username[i], data->src_username[i]); //для отправки ответа клиенту отправителю от лица неподключенного клиента получателя 
+                    std::swap(data->dst_username[i], data->src_username[i]); //для отправки ответа клиенту отправителю от лица клиента получателя 
                 }
 
                 data = (Command*)realloc(data, 28);//на заголовок и сообщение/ответ "200"
@@ -125,12 +117,12 @@ void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
                 data->len = 28;
                 data->type = 1;
 
-
                 send(sock, data, data->len, 0);
 
             }
 
             while(!flag_to_read.load()){}
+
             flag_to_read.store(false);
             recv_messages->push_back(r_mess);
             flag_to_read.store(true);
@@ -151,11 +143,33 @@ void read_messages(std::vector<RecvMessage> *recv_messages){
         std::cout<<"Message type: "<<i.message_type << "\n" << "Message ID: " << i.message_ID << "\n" << i.sender_username <<": " << i.message << std::endl << std::endl;
     }
     flag_to_read.store(true);
-
     
 }
 
+/*                   ~Работа клиента~                           */
+/*  Клиент работает в 2-х потоках: основном и дочернем
 
+    В основном потоке пользователь может отправить сообщение,
+    при этом указав, кому именно это сообщение адресуется.
+    Так же в основном потоке пользователь может посмотреть все
+    сообщения, принятые дочерним потоком, которые пришли ему 
+    за время сессии.
+
+    Дочерний поток только принимает собщения, которые были 
+    отправленны сервером.
+
+    Обобщая, юзер экспириенс больше походит на опыт использования
+    электронной почтой, где нужно зайти в раздел "писма", чтобы 
+    посмотреть все новые писма, а при отправке письма указать 
+    получателя. Отличие в том, что мой клиент не уведомляет
+    пользователя о новом сообщении, так что 
+    по факту пользователю нужно постоянно долбить по кнопке 
+    "просмотреть собщения", чтобы узнать, пришли ли они или нет.
+
+    ps: В какой-то степени это даже интересно, никогда не знаешь,
+    пришло ли тебе что-то или нет.
+
+*/
 void menu(int sock, std::vector<RecvMessage> *recv_messages, char *src_username){
     std::string act_buff;
     int act;
@@ -196,22 +210,18 @@ void menu(int sock, std::vector<RecvMessage> *recv_messages, char *src_username)
             finish_the_program.store(true);
             break;
         }
-
         default:
             std::cout << "wrong enter\n" <<std::endl; 
             break;
         }
-
     }
-    
-
 }
 
 int main(int argc, char* argv[]){
     
     if((argc != 4) || (strlen(argv[1])>7) ){
-        perror("Wrong enter");
-        exit(4);
+        perror("Wrong enter, you need to enter separated by spase your username(length < 8) and IP and Port of the server");
+        exit(3);
     }
 
     struct in_addr inp;
@@ -223,9 +233,9 @@ int main(int argc, char* argv[]){
     memcpy(src_username, argv[1],8);
     long port = strtol(argv[3], &p_end, 10);
     
-    if(strlen(p_end)!=0 || port<0 || port>65535 || !inet_aton( argv[2] , &inp)/*ip*/){
-        perror("Wrong enter");
-        exit(4);
+    if(*p_end!='\0' || port<0 || port>65535 || !inet_aton( argv[2] , &inp)/*ip*/){
+        perror("Wrong enter, you need to enter separated by spase your username(length < 8) and IP and Port of the server");
+        exit(3);
     }
 
     addr.sin_family = AF_INET;
@@ -242,7 +252,7 @@ int main(int argc, char* argv[]){
     if(connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
         perror("Problem with connection");
-        exit(2);
+        exit(1);
     }
 
     std::vector<RecvMessage> recv_messages;
