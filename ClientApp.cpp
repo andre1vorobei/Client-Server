@@ -5,17 +5,11 @@
 #include<sys/types.h>
 #include<sys/socket.h>
 #include<netinet/in.h>
-#include <arpa/inet.h>
-#include<unistd.h>
+#include<arpa/inet.h>
 #include<poll.h>
 #include<string.h>
-#include<thread>
-#include <mutex>
-#include <vector>
-#include <atomic>
-#include <limits>
 
-
+#include <unistd.h>
 
 struct Command{
     unsigned short len;
@@ -26,202 +20,76 @@ struct Command{
     char message[];
 };
 
-struct RecvMessage{
-    std::string sender_username;
-    std::string message;
-    unsigned int message_ID;
-    unsigned short message_type;
-};
+void Usage(char *program_name){
+    std::cout << "Usage: " << program_name << " <Username> <IP> <Port>" << std::endl;
+}
 
-std::atomic<bool> finish_the_program(false);
-std::atomic<bool> flag_to_read(true);
-
-void send_message(int sock,char *SRC, unsigned int m_ID){
-
-    Command *A = (Command*)malloc(24);
+void SendAnswer(int sock, Command *&data){
+    std::swap(data->dst_username, data->src_username); //для отправки ответа клиенту отправителю от лица клиента получателя 
     
-    char s_buff[1000];
-    std::string str_buff;
-    
-    memcpy(A->src_username, SRC, 8);
+    data = (Command*)realloc(data, 28);//на заголовок и сообщение/ответ "200"
 
-    std::cout << "DST: ";
-    std::cin.ignore();
-    getline(std::cin, str_buff);
+    memcpy(data->message, "200", 4);
+    data->len = 28;
+    data->type = 1;
 
-    while(str_buff.length()>7 || str_buff.length()==0){
-        std::cout <<( str_buff.length()==0 ? "Username cant be empty" : "Too long username, try again") << std::endl;
-        std::cout << "DST: ";
-        getline(std::cin, str_buff);
-    }
-    memcpy(A->dst_username, str_buff.c_str(), 8);
- 
-    std::cout << "Message: ";
-    getline(std::cin, str_buff);
-    while(str_buff.length()>999 || str_buff.length()==0){
-        std::cout << (str_buff.length()==0 ? "Message cant be empty" : "Too long message, try again") << std::endl;
-        std::cout << "Message: ";
-        getline(std::cin, str_buff);
-    }
-
-    A = (Command*)realloc(A, 24+str_buff.length()+1);
-    
-    memcpy(A->message, str_buff.c_str(), str_buff.length()+1);
-    A->len = ((str_buff.length()+1)+24);
-    A->type = 0;
-    A->message_ID = m_ID;
-
-    send(sock, A, A->len, 0);
-    std::cout << std::endl;
+    send(sock, data, data->len, 0);
 
 }
 
-void recv_messages_in_thread(int sock, std::vector<RecvMessage> *recv_messages){
-    struct sockaddr_in addr;
-    struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd));
-    struct RecvMessage r_mess;
+void RecvMessage(int sock){
 
-    pfds[0].fd = sock;
-    pfds[0].events = POLLIN ;
-    int ready;
-    int bytes_read;
+    Command *data = (Command*)malloc(24);
+    recv(sock, data, 24, 0);
+    data = (Command*)realloc(data, data->len);
+    recv(sock, data->message, data->len-24, 0);
 
-    while(!finish_the_program.load()){
-
-        ready = poll(pfds, 1, 1);
-
-        if (ready == -1){
-            perror("poll");
-            exit(3);
-        }
-        else if(pfds[0].revents & POLLIN){
-
-            Command *data = (Command*)malloc(24);
-            bytes_read = recv(sock, data, 24, 0);
-            data = (Command*)realloc(data, data->len);
-            bytes_read = recv(sock, data->message, data->len-24, 0);
-
-            r_mess.sender_username = data->src_username;
-            r_mess.message = data->message;
-            r_mess.message_ID = data->message_ID;
-            r_mess.message_type = data->type;
-
-            if(data->type == 0 ){
-                for(int i = 0; i < 8; i++){
-                    std::swap(data->dst_username[i], data->src_username[i]); //для отправки ответа клиенту отправителю от лица клиента получателя 
-                }
-
-                data = (Command*)realloc(data, 28);//на заголовок и сообщение/ответ "200"
-
-                memcpy(data->message, "200", 4);
-                data->len = 28;
-                data->type = 1;
-
-                send(sock, data, data->len, 0);
-
-            }
-
-            while(!flag_to_read.load()){}
-
-            flag_to_read.store(false);
-            recv_messages->push_back(r_mess);
-            flag_to_read.store(true);
-
-            delete data;
-            data = nullptr;
-            pfds[0].revents = 0;
-            
-        }
-    }
-}
-
-void read_messages(std::vector<RecvMessage> *recv_messages){
-    while(!flag_to_read.load()){}
-
-    flag_to_read.store(false);
-    for(RecvMessage i: *(recv_messages)){
-        std::cout<<"Message type: "<<i.message_type << "\n" << "Message ID: " << i.message_ID << "\n" << i.sender_username <<": " << i.message << std::endl << std::endl;
-    }
-    flag_to_read.store(true);
-    
-}
-
-/*                   ~Работа клиента~                           */
-/*  Клиент работает в 2-х потоках: основном и дочернем
-
-    В основном потоке пользователь может отправить сообщение,
-    при этом указав, кому именно это сообщение адресуется.
-    Так же в основном потоке пользователь может посмотреть все
-    сообщения, принятые дочерним потоком, которые пришли ему 
-    за время сессии.
-
-    Дочерний поток только принимает собщения, которые были 
-    отправленны сервером.
-
-    Обобщая, юзер экспириенс больше походит на опыт использования
-    электронной почтой, где нужно зайти в раздел "писма", чтобы 
-    посмотреть все новые писма, а при отправке письма указать 
-    получателя. Отличие в том, что мой клиент не уведомляет
-    пользователя о новом сообщении, так что 
-    по факту пользователю нужно постоянно долбить по кнопке 
-    "просмотреть собщения", чтобы узнать, пришли ли они или нет.
-
-    ps: В какой-то степени это даже интересно, никогда не знаешь,
-    пришло ли тебе что-то или нет.
-
-*/
-void menu(int sock, std::vector<RecvMessage> *recv_messages, char *src_username){
-    std::string act_buff;
-    int act;
-    int m_ID = 1;
-    bool ex = 0 ;
-    char *end_p;
-    while(ex!=1){
-        std::cout << "1 - send message" << std::endl;
-        std::cout << "2 - read the recv message" << std::endl;
-        std::cout << "0 - exit" << std::endl;
-
-        std::cout << "choose an action: ";
-        std::cin >>act_buff;
-        act = strtol(act_buff.c_str(), &end_p, 10);
-        while(strlen(end_p)!=0){
-            std::cout << "wrong enter, try again"<<std::endl;
-            std::cout << "choose an action: ";
-            std::cin >>act_buff;
-            act = strtol(act_buff.c_str(), &end_p, 10);
-        }
-
+    if(data->type == 0){
         std::cout << std::endl;
+        std::cout << "New message by " << data->src_username << ": " << data->message << std::endl;
+        SendAnswer(sock, data);
+    }
+    else if(data->type == 2){
+        std::cout << std::endl;
+        std::cout << "New Offline message by " << data->src_username << ": " << data->message << std::endl;
+    }
 
-        switch (act)
-        {
-        case(1):{
-            send_message(sock,src_username, m_ID);
-            m_ID++;
-            break;
-        }
-        case(2):{
-            read_messages(recv_messages);
-            break;
-        }
-        case(0):{
-            close(sock);
-            ex = 1;
-            finish_the_program.store(true);
-            break;
-        }
-        default:
-            std::cout << "wrong enter\n" <<std::endl; 
-            break;
-        }
+    free(data);
+}
+
+
+void SendMessage(int sock, std::string &str_buff, char *_src_username){
+    static unsigned int _message_ID = 1;
+    std::string _dst_username = str_buff.substr(0, str_buff.find(':'));
+    std::string _message = str_buff.substr(str_buff.find(':')+1);
+
+    if(_dst_username.length()>7 || _message.length()>999 || _dst_username.length()==0 || _message.length()==0 || str_buff.find(':') == -1){
+        std::cout << "Wrong enter, try again" << std::endl;
+    }
+    else{
+        Command *sended_message = (Command*)malloc(24+_message.length()+1);
+        memcpy(sended_message->src_username, _src_username, 8);
+        memcpy(sended_message->dst_username, _dst_username.c_str(), _dst_username.length()+1);
+        memcpy(sended_message->message, _message.c_str(), _message.length()+1);
+        sended_message->len = 24+_message.length()+1;
+        sended_message->message_ID = _message_ID;
+        _message_ID++;
+        sended_message->type = 0;
+
+        send(sock, sended_message, sended_message->len, 0);
+        free(sended_message);
     }
 }
 
 int main(int argc, char* argv[]){
-    
-    if((argc != 4) || (strlen(argv[1])>7) ){
-        perror("Wrong enter, you need to enter separated by spase your username(length < 8) and IP and Port of the server");
-        exit(3);
+    if(argc != 4){
+        Usage(argv[0]);
+        exit(1);
+    }
+    if((strlen(argv[1])>7) ){
+        Usage(argv[0]);
+        perror("Too long username, max length is 7");
+        exit(1);
     }
 
     struct in_addr inp;
@@ -234,8 +102,9 @@ int main(int argc, char* argv[]){
     long port = strtol(argv[3], &p_end, 10);
     
     if(*p_end!='\0' || port<0 || port>65535 || !inet_aton( argv[2] , &inp)/*ip*/){
-        perror("Wrong enter, you need to enter separated by spase your username(length < 8) and IP and Port of the server");
-        exit(3);
+        Usage(argv[0]);
+        perror("Wrong format of IP or Port");
+        exit(1);
     }
 
     addr.sin_family = AF_INET;
@@ -243,6 +112,7 @@ int main(int argc, char* argv[]){
     addr.sin_addr.s_addr = inp.s_addr;
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
+    
     if(sock < 0)
     {
         perror("Problem with creating a socket");
@@ -254,13 +124,52 @@ int main(int argc, char* argv[]){
         perror("Problem with connection");
         exit(1);
     }
+    else{
+        std::cout << "Connection success\n" << std::endl;
+        std::cout << "Available commands:\n" << std::endl;
+        std::cout << "<dst_username>:<message> - send the message to another user\n" << std::endl;
+        std::cout << "exit - lol to exit\n\n" << std::endl;
+    }
 
-    std::vector<RecvMessage> recv_messages;
+    pollfd *pfds = (pollfd*)malloc(sizeof(pollfd)*2);
+    pfds[0].fd = 0;
+    pfds[0].events = POLLIN;
+    pfds[1].fd = sock;
+    pfds[1].events = POLLIN | POLLRDHUP | POLLHUP;
 
-    std::thread t1{recv_messages_in_thread, sock, &recv_messages};
+    int ready;
 
-    menu(sock, &recv_messages, src_username);
-    
-    t1.join();
+    int message_number = 0;
+
+    std::string str_buff;
+    bool ex = false;
+
+    while(!ex){
+
+        ready = poll(pfds, 2, 1000);
+
+        if (ready == -1){
+            perror("poll");
+            exit(1);
+        }
+        else if((pfds[1].revents & POLLRDHUP) || (pfds[1].revents & POLLHUP)){
+            std::cout << "server is disable"<<std::endl;
+            ex = true;
+        }
+        else if(pfds[0].revents & POLLIN){
+            std::cout << (pfds[0].revents & POLLIN) << std::endl;
+            std::getline(std::cin, str_buff);
+            if(str_buff == "exit"){
+                ex = true;
+            }
+            else{
+                SendMessage(sock, str_buff, src_username);
+            }
+        }
+        else if(pfds[1].revents & POLLIN){
+            RecvMessage(sock);
+        }
+    }
+    std::cout << "programm finishd" << std::endl;
     return 0;
 }
