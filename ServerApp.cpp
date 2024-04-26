@@ -14,13 +14,16 @@
 #include <sys/timerfd.h>
 #include<queue>
 
+#define USERNAME_MAX_LEN 8
+#define HEADER_LEN 24
+#define MESSAGE_MAX_LEN 1000
 
 struct Command{
     unsigned short len;
     unsigned short type;
     unsigned int message_ID;
-    char src_username[8];
-    char dst_username[8];
+    char src_username[USERNAME_MAX_LEN];
+    char dst_username[USERNAME_MAX_LEN];
     char message[];
 };
 
@@ -30,6 +33,11 @@ struct ClientInfo{
     std::queue<int> timers_queue;
     std::queue<Command*> commands_queue;
 };
+
+void Usage(char *program_name){
+    std::cout << "Usage: " << program_name << " <Username> <IP> <Port>" << std::endl;
+}
+
 
 void save(std::string filename, Command *p){
     std::ofstream f1(filename+ ".bin", std::ios::binary | std::ios::app);
@@ -44,10 +52,10 @@ void load_and_send(const std::string recipiter,const pollfd* pfds, std::unordere
     std::ifstream f2(recipiter+".bin", std::ios::binary | std::ios::in);
     
     while(f2.peek() != EOF){
-        data = (Command*)malloc(24);
-        f2.read((char*)data, 24);
+        data = (Command*)malloc(HEADER_LEN);
+        f2.read((char*)data, HEADER_LEN);
         data = (Command*)realloc(data, data->len);
-        f2.read((char*)data->message, data->len-24);
+        f2.read((char*)data->message, data->len-HEADER_LEN);
         data->type = 2;
         std::cout <<data->src_username << " -> " << data->dst_username << ": message sended, bytes " << send(pfds[clients[data->dst_username].c_socket_pos].fd, data, data->len, 0) << std::endl;
     }
@@ -120,15 +128,16 @@ void Event_DisconnectAll(pollfd *&pfds, std::unordered_map<std::string, ClientIn
         }
     }
 }
+
 void AcceptCommand(Command *&data, pollfd *pfds, ClientInfo &client_data){
 
-    data = (Command*)malloc(24); // для приема заголовка
+    data = (Command*)malloc(HEADER_LEN); // для приема заголовка
 
-    int bytes_read = recv(pfds[client_data.c_socket_pos].fd, data, 24, 0); // принимаем заголовок
+    int bytes_read = recv(pfds[client_data.c_socket_pos].fd, data, HEADER_LEN, 0); // принимаем заголовок
 
     data = (Command*)realloc(data, data->len);// выделяем память под сообщение
 
-    bytes_read = recv(pfds[client_data.c_socket_pos].fd, data->message, data->len-24, 0);// считываем сообщение
+    bytes_read = recv(pfds[client_data.c_socket_pos].fd, data->message, data->len-HEADER_LEN, 0);// считываем сообщение
 
     std::cout << "TYPE: " << data->type << std::endl;
     std::cout << "SRC: " << data->src_username << std::endl;
@@ -186,20 +195,17 @@ void SaveMessageOffline(std::string client_src_name, pollfd *&pfds, std::unorder
 
     save(data->dst_username, data);
 
-    for(int i = 0; i < 8; i++){
-        std::swap(data->dst_username[i], data->src_username[i]); //для отправки ответа клиенту отправителю от лица неподключенного клиента получателя 
-    }
+    std::swap(data->dst_username, data->src_username); //для отправки ответа клиенту отправителю от лица неподключенного клиента получателя 
+    
+    data = (Command*)realloc(data, HEADER_LEN+3);//на заголовок и сообщение/ответ "300"
 
-    data = (Command*)realloc(data, 28);//на заголовок и сообщение/ответ "300"
-
-    memcpy(data->message, "300", 4);
-    data->len = 28;
+    memcpy(data->message, "300", 3);
+    data->len = HEADER_LEN+3;
     data->type = 1;
     send(pfds[clients[client_src_name].c_socket_pos].fd, data, data->len, 0);
 
-    for(int i = 0; i < 8; i++){
-        std::swap(data->dst_username[i], data->src_username[i]);
-    } 
+    std::swap(data->dst_username, data->src_username);
+
 }
 
 void IdentifyUser(std::string client_src_name, ClientInfo &client_data, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients,std::unordered_map<int, std::string> &sock_x_name, Command *data){
@@ -273,9 +279,8 @@ void Event_ClientProcessing(pollfd *&pfds,std::unordered_map<std::string, Client
 
 int main(int argc, char* argv[])
 {
-
     if(argc != 3 ){
-        perror("Wrong enter, you need to enter separated by spase your IP and Port");
+        Usage(argv[0]);
         exit(3);
     }
 
@@ -333,10 +338,10 @@ int main(int argc, char* argv[])
         //далее на нечетных местах(1, 3, 5...) стоят дескрипторы сокетов подключенных к серверу клиентов
         //на четных местах(2, 4, 6...) стоят дескрипторы таймеров принятых клиентов
         //в итоге получается пара дескрипторов [сокет, таймер] для одного клиента в общем массиве дескрипторов. 
-        ready = poll(pfds, num_connections*2-1, 6000000);
+        ready = poll(pfds, num_connections*2-1, 3600000);
         
         printf("About to poll:\n");
-        if (ready == -1){
+        if (ready == -1 && errno != EINTR){
             perror("Poll");
             exit(1);
         }

@@ -24,6 +24,14 @@ struct Command{
     char message[];
 };
 
+struct Header{
+    unsigned short len;
+    unsigned short type;
+    unsigned int message_ID;
+    char src_username[USERNAME_MAX_LEN];
+    char dst_username[USERNAME_MAX_LEN];
+};
+
 void Usage(char *program_name){
     std::cout << "Usage: " << program_name << " <Username> <IP> <Port>" << std::endl;
 }
@@ -42,33 +50,54 @@ void SendAnswer(int sock, Command *&data){
 }
 
 void RecvMessage(int sock){
+    
+    static int head_recv_bytes = 0;
+    static int message_recv_bytes = 0;
+    static Command *data = (Command*)malloc(HEADER_LEN);
+    int recv_bytes;
 
-    Command *data = (Command*)malloc(HEADER_LEN);
-    int recv_bytes = recv(sock, data, HEADER_LEN, 0);
-    /*РЕАЛИЗОВАТЬ БУФЕР*/
-    if (recv_bytes != HEADER_LEN){
-        perror("Suspicious segment");
-        exit(1);
-    }
+    if(head_recv_bytes != HEADER_LEN){
 
-    data = (Command*)realloc(data, data->len);
-    recv_bytes = recv(sock, data->message, data->len-HEADER_LEN, 0);
-      if (recv_bytes !=data->len-HEADER_LEN){
-        perror("Suspicious segment");
-        exit(1);
-    }
+        recv_bytes = recv(sock, (char*)data+head_recv_bytes, HEADER_LEN-head_recv_bytes, 0);
+        if (recv_bytes == -1){
+            perror("recv");
+            exit(1);
+        }
 
-    if(data->type == 0){
-        std::cout << std::endl;
-        std::cout << "New message by " << data->src_username << ": " << data->message  << "\n" << std::endl;
-        SendAnswer(sock, data);
+        head_recv_bytes += recv_bytes;
+        if(head_recv_bytes == HEADER_LEN){
+            data = (Command*)realloc(data, data->len);
+        }
     }
-    else if(data->type == 2){
-        std::cout << std::endl;
-        std::cout << "New Offline message by " << data->src_username << ": " << data->message << "\n" << std::endl;
-    }
+    else if(message_recv_bytes != data->len-HEADER_LEN){
 
-    free(data);
+        recv_bytes =  recv(sock, ((char*)data->message)+message_recv_bytes, (data->len-HEADER_LEN)-message_recv_bytes, 0);
+        if (recv_bytes == -1){
+            perror("recv");
+            exit(1);
+        }
+
+        message_recv_bytes += recv_bytes;
+    
+        if(message_recv_bytes == data->len-HEADER_LEN){
+            if(data->type == 0){
+                std::cout << std::endl;
+                std::cout << "New message by " << data->src_username << ": " << data->message  << "\n" << std::endl;
+                SendAnswer(sock, data);
+            }
+            else if(data->type == 2){
+                std::cout << std::endl;
+                std::cout << "New Offline message by " << data->src_username << ": " << data->message << "\n" << std::endl;
+            }
+
+            free(data);
+
+            data = (Command*)malloc(HEADER_LEN);
+            head_recv_bytes = 0;
+            message_recv_bytes = 0;
+
+        }
+    }
 }
 
 
