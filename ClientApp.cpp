@@ -11,12 +11,16 @@
 
 #include <unistd.h>
 
+#define USERNAME_MAX_LEN 8
+#define HEADER_LEN 24
+#define MESSAGE_MAX_LEN 1000
+
 struct Command{
     unsigned short len;
     unsigned short type;
     unsigned int message_ID;
-    char src_username[8];
-    char dst_username[8];
+    char src_username[USERNAME_MAX_LEN];
+    char dst_username[USERNAME_MAX_LEN];
     char message[];
 };
 
@@ -27,10 +31,10 @@ void Usage(char *program_name){
 void SendAnswer(int sock, Command *&data){
     std::swap(data->dst_username, data->src_username); //для отправки ответа клиенту отправителю от лица клиента получателя 
     
-    data = (Command*)realloc(data, 28);//на заголовок и сообщение/ответ "200"
+    data = (Command*)realloc(data, HEADER_LEN+3);//на заголовок и сообщение/ответ "200"
 
-    memcpy(data->message, "200", 4);
-    data->len = 28;
+    memcpy(data->message, "200", 3);
+    data->len = 27;
     data->type = 1;
 
     send(sock, data, data->len, 0);
@@ -39,19 +43,29 @@ void SendAnswer(int sock, Command *&data){
 
 void RecvMessage(int sock){
 
-    Command *data = (Command*)malloc(24);
-    recv(sock, data, 24, 0);
+    Command *data = (Command*)malloc(HEADER_LEN);
+    int recv_bytes = recv(sock, data, HEADER_LEN, 0);
+    /*РЕАЛИЗОВАТЬ БУФЕР*/
+    if (recv_bytes != HEADER_LEN){
+        perror("Suspicious segment");
+        exit(1);
+    }
+
     data = (Command*)realloc(data, data->len);
-    recv(sock, data->message, data->len-24, 0);
+    recv_bytes = recv(sock, data->message, data->len-HEADER_LEN, 0);
+      if (recv_bytes !=data->len-HEADER_LEN){
+        perror("Suspicious segment");
+        exit(1);
+    }
 
     if(data->type == 0){
         std::cout << std::endl;
-        std::cout << "New message by " << data->src_username << ": " << data->message << std::endl;
+        std::cout << "New message by " << data->src_username << ": " << data->message  << "\n" << std::endl;
         SendAnswer(sock, data);
     }
     else if(data->type == 2){
         std::cout << std::endl;
-        std::cout << "New Offline message by " << data->src_username << ": " << data->message << std::endl;
+        std::cout << "New Offline message by " << data->src_username << ": " << data->message << "\n" << std::endl;
     }
 
     free(data);
@@ -63,22 +77,22 @@ void SendMessage(int sock, std::string &str_buff, char *_src_username){
     std::string _dst_username = str_buff.substr(0, str_buff.find(':'));
     std::string _message = str_buff.substr(str_buff.find(':')+1);
 
-    if(_dst_username.length()>7 || _message.length()>999 || _dst_username.length()==0 || _message.length()==0 || str_buff.find(':') == -1){
+    if(_dst_username.length()>USERNAME_MAX_LEN || _message.length()>MESSAGE_MAX_LEN || _dst_username.length()==0 || _message.length()==0 || str_buff.find(':') == -1){
         std::cout << "Wrong enter, try again" << std::endl;
+        return;
     }
-    else{
-        Command *sended_message = (Command*)malloc(24+_message.length()+1);
-        memcpy(sended_message->src_username, _src_username, 8);
-        memcpy(sended_message->dst_username, _dst_username.c_str(), _dst_username.length()+1);
-        memcpy(sended_message->message, _message.c_str(), _message.length()+1);
-        sended_message->len = 24+_message.length()+1;
-        sended_message->message_ID = _message_ID;
-        _message_ID++;
-        sended_message->type = 0;
+    Command *prepared_message = (Command*)malloc(HEADER_LEN+_message.length());
+    memcpy(prepared_message->src_username, _src_username, USERNAME_MAX_LEN);
+    memcpy(prepared_message->dst_username, _dst_username.c_str(), _dst_username.length());
+    memcpy(prepared_message->message, _message.c_str(), _message.length());
+    prepared_message->len = HEADER_LEN+_message.length();
+    prepared_message->message_ID = _message_ID;
+    _message_ID++;
+    prepared_message->type = 0;
 
-        send(sock, sended_message, sended_message->len, 0);
-        free(sended_message);
-    }
+    send(sock, prepared_message, prepared_message->len, 0);
+    free(prepared_message);
+    
 }
 
 int main(int argc, char* argv[]){
@@ -86,19 +100,19 @@ int main(int argc, char* argv[]){
         Usage(argv[0]);
         exit(1);
     }
-    if((strlen(argv[1])>7) ){
+    if((strlen(argv[1])>USERNAME_MAX_LEN) ){
         Usage(argv[0]);
-        perror("Too long username, max length is 7");
+        perror("Too long username, max length is 8");
         exit(1);
     }
 
     struct in_addr inp;
     int sock;
     struct sockaddr_in addr;
-    char src_username[8];
+    char src_username[USERNAME_MAX_LEN];
     char* p_end;
 
-    memcpy(src_username, argv[1],8);
+    memcpy(src_username, argv[1],USERNAME_MAX_LEN);
     long port = strtol(argv[3], &p_end, 10);
     
     if(*p_end!='\0' || port<0 || port>65535 || !inet_aton( argv[2] , &inp)/*ip*/){
@@ -146,18 +160,20 @@ int main(int argc, char* argv[]){
 
     while(!ex){
 
-        ready = poll(pfds, 2, 1000);
+        ready = poll(pfds, 2, 1);
 
-        if (ready == -1){
+        if (ready == -1 && errno != EINTR){
             perror("poll");
             exit(1);
         }
-        else if((pfds[1].revents & POLLRDHUP) || (pfds[1].revents & POLLHUP)){
-            std::cout << "server is disable"<<std::endl;
+
+        if((pfds[1].revents & POLLRDHUP) || (pfds[1].revents & POLLHUP)){
+            std::cout << "server is down"<<std::endl;
             ex = true;
+            break;
         }
-        else if(pfds[0].revents & POLLIN){
-            std::cout << (pfds[0].revents & POLLIN) << std::endl;
+
+        if(pfds[0].revents & POLLIN){
             std::getline(std::cin, str_buff);
             if(str_buff == "exit"){
                 ex = true;
@@ -166,7 +182,8 @@ int main(int argc, char* argv[]){
                 SendMessage(sock, str_buff, src_username);
             }
         }
-        else if(pfds[1].revents & POLLIN){
+
+        if(pfds[1].revents & POLLIN){
             RecvMessage(sock);
         }
     }
