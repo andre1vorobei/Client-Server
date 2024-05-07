@@ -172,22 +172,22 @@ void ForwardMessageOnline(std::string client_src_name, pollfd *&pfds, std::unord
     tmp = nullptr;
 }
 
-void ForwardAnswerOnline(std::string client_src_name, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, Command *data){
-    std::cout <<client_src_name << " -> " << data->dst_username << ": message sended, bytes " << send(pfds[clients[data->dst_username].c_socket_pos].fd, data, data->len, 0) << std::endl;
+void ForwardAnswerOnline(std::string client_src_name, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, Command *answer){
+    std::cout <<client_src_name << " -> " << answer->dst_username << ": message sended, bytes " << send(pfds[clients[answer->dst_username].c_socket_pos].fd, answer, answer->len, 0) << std::endl;
                             
-    close(clients[data->src_username].timers_queue.front());
-    pfds[clients[data->src_username].c_timer_pos].revents = 0;
+    close(clients[answer->src_username].timers_queue.front());
+    pfds[clients[answer->src_username].c_timer_pos].revents = 0;
 
-    clients[data->src_username].timers_queue.pop();
+    clients[answer->src_username].timers_queue.pop();
     
-    if(!clients[data->src_username].timers_queue.empty()){
-        pfds[clients[data->src_username].c_timer_pos].fd = clients[data->src_username].timers_queue.front();
+    if(!clients[answer->src_username].timers_queue.empty()){
+        pfds[clients[answer->src_username].c_timer_pos].fd = clients[answer->src_username].timers_queue.front();
     }
     else{
-        pfds[clients[data->src_username].c_timer_pos].fd = -1;
+        pfds[clients[answer->src_username].c_timer_pos].fd = -1;
     }
 
-    clients[data->src_username].commands_queue.pop();
+    clients[answer->src_username].commands_queue.pop();
 }
 
 void SaveMessageOffline(std::string client_src_name, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, Command *data){

@@ -42,7 +42,7 @@ void SendAnswer(int sock, Command *&data){
     data = (Command*)realloc(data, HEADER_LEN+3);//на заголовок и сообщение/ответ "200"
 
     memcpy(data->message, "200", 3);
-    data->len = 27;
+    data->len = HEADER_LEN+3;
     data->type = 1;
 
     send(sock, data, data->len, 0);
@@ -82,12 +82,16 @@ void RecvMessage(int sock){
         if(message_recv_bytes == data->len-HEADER_LEN){
             if(data->type == 0){
                 std::cout << std::endl;
-                std::cout << "New message by " << data->src_username << ": " << data->message  << "\n" << std::endl;
+                std::cout << "From " << data->src_username << ": " << data->message  << "\n" << std::endl;
                 SendAnswer(sock, data);
+            }
+            else if(data->type == 1){
+                std::cout << std::endl;
+                std::cout<< "User: " << data->src_username << "  Message_ID: " << data->message_ID << "  Status: " << data->message << "\n" << std::endl;
             }
             else if(data->type == 2){
                 std::cout << std::endl;
-                std::cout << "New Offline message by " << data->src_username << ": " << data->message << "\n" << std::endl;
+                std::cout << "Offline from " << data->src_username << ": " << data->message << "\n" << std::endl;
             }
 
             free(data);
@@ -106,7 +110,7 @@ void SendMessage(int sock, std::string &str_buff, char *_src_username){
     std::string _dst_username = str_buff.substr(0, str_buff.find(':'));
     std::string _message = str_buff.substr(str_buff.find(':')+1);
 
-    if(_dst_username.length()>USERNAME_MAX_LEN || _message.length()>MESSAGE_MAX_LEN || _dst_username.length()==0 || _message.length()==0 || str_buff.find(':') == -1){
+    if(_dst_username.length() > USERNAME_MAX_LEN || _message.length() > MESSAGE_MAX_LEN || _dst_username.length() == 0 || _message.length() == 0 || str_buff.find(':') == -1){
         std::cout << "Wrong enter, try again" << std::endl;
         return;
     }
@@ -144,7 +148,7 @@ int main(int argc, char* argv[]){
     memcpy(src_username, argv[1],USERNAME_MAX_LEN);
     long port = strtol(argv[3], &p_end, 10);
     
-    if(*p_end!='\0' || port<0 || port>65535 || !inet_aton( argv[2] , &inp)/*ip*/){
+    if(*p_end != '\0' || port < 0 || port > 65535 || !inet_aton(argv[2], &inp)/*ip*/){
         Usage(argv[0]);
         perror("Wrong format of IP or Port");
         exit(1);
@@ -206,6 +210,7 @@ int main(int argc, char* argv[]){
             std::getline(std::cin, str_buff);
             if(str_buff == "exit"){
                 ex = true;
+                break;
             }
             else{
                 SendMessage(sock, str_buff, src_username);
