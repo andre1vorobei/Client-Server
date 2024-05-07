@@ -114,9 +114,12 @@ void SendMessage(int sock, std::string &str_buff, char *_src_username){
         std::cout << "Wrong enter, try again" << std::endl;
         return;
     }
+    if(_message.length()<1000){
+        _message+='\0';
+    }
     Command *prepared_message = (Command*)malloc(HEADER_LEN+_message.length());
     memcpy(prepared_message->src_username, _src_username, USERNAME_MAX_LEN);
-    memcpy(prepared_message->dst_username, _dst_username.c_str(), _dst_username.length());
+    memcpy(prepared_message->dst_username, _dst_username.c_str(), USERNAME_MAX_LEN);
     memcpy(prepared_message->message, _message.c_str(), _message.length());
     prepared_message->len = HEADER_LEN+_message.length();
     prepared_message->message_ID = _message_ID;
@@ -147,7 +150,6 @@ int main(int argc, char* argv[]){
 
     memcpy(src_username, argv[1],USERNAME_MAX_LEN);
     long port = strtol(argv[3], &p_end, 10);
-    
     if(*p_end != '\0' || port < 0 || port > 65535 || !inet_aton(argv[2], &inp)/*ip*/){
         Usage(argv[0]);
         perror("Wrong format of IP or Port");
@@ -155,7 +157,8 @@ int main(int argc, char* argv[]){
     }
 
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
+    inet_aton("192.168.10.126", &inp);
+    addr.sin_port = htons(port );
     addr.sin_addr.s_addr = inp.s_addr;
 
     sock = socket(AF_INET, SOCK_STREAM, 0);

@@ -34,8 +34,17 @@ struct ClientInfo{
     std::queue<Command*> commands_queue;
 };
 
+std::unordered_map<std::string, ClientInfo> clients;
+std::unordered_map<int, std::string> sock_x_name;
+struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd));
+struct itimerspec timer_settings;
+struct sockaddr_in addr;
+unsigned short num_connections = 1;//кол-во подключений, всегда равени минимум 1, т.к. в общее кол-во включен слушающий сокет
+unsigned int num_unind_user = 1;
+
+
 void Usage(char *program_name){
-    std::cout << "Usage: " << program_name << " <Username> <IP> <Port>" << std::endl;
+    std::cout << "Usage: " << program_name << " <IP> <Port>" << std::endl;
 }
 
 
@@ -91,7 +100,7 @@ void Event_AcceptNewClient(int listener, unsigned short &num_connections, pollfd
     num_unind_user++;
 }
 
-void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, std::unordered_map<int, std::string> &sock_x_name, unsigned short& num_connections){
+void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data){
     std::cout << "User "<< client_src_name << " disconnected" << std:: endl;
 
         close(pfds[client_data.c_socket_pos].fd);
@@ -120,32 +129,33 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
         pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(num_connections*2-1));
 }
 
-void Event_DisconnectAll(pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, std::unordered_map<int, std::string> &sock_x_name, unsigned short& num_connections){
+void Event_DisconnectAll( unsigned short& num_connections){
     while(!clients.empty()){
         for ( auto& [client_src_name, client_data] : clients){
-            Event_DisconnectClient(client_src_name, client_data, pfds,clients, sock_x_name, num_connections);
+            Event_DisconnectClient(client_src_name, client_data);
             break;
         }
     }
 }
 
-void AcceptCommand(Command *&data, pollfd *pfds, ClientInfo &client_data){
+void AcceptCommand(Command *&data, ClientInfo &client_data){
 
     data = (Command*)malloc(HEADER_LEN); // для приема заголовка
 
     int bytes_read = recv(pfds[client_data.c_socket_pos].fd, data, HEADER_LEN, 0); // принимаем заголовок
 
+    std::cout << "TYPE: " << data->type << std::endl;
+    std::cout << "SRC: " << data->src_username << std::endl;
+    std::cout << "DST: " << data->dst_username << std::endl;
+
     data = (Command*)realloc(data, data->len);// выделяем память под сообщение
 
     bytes_read = recv(pfds[client_data.c_socket_pos].fd, data->message, data->len-HEADER_LEN, 0);// считываем сообщение
 
-    std::cout << "TYPE: " << data->type << std::endl;
-    std::cout << "SRC: " << data->src_username << std::endl;
-    std::cout << "DST: " << data->dst_username << std::endl;
     std::cout << "MESSAGE: " << data->message << std::endl;
 }
 
-void PrintInfoAboutPoll(const std::string client_src_name, const pollfd *pfds, const ClientInfo &client_data){
+void PrintInfoAboutPoll(const std::string client_src_name, const ClientInfo &client_data){
     printf("  fd=%s; events: %s%s%s%s\n", client_src_name.c_str(),
         (pfds[client_data.c_socket_pos].revents & POLLHUP) ? "POLLHUP " : "",
         (pfds[client_data.c_socket_pos].revents & POLLRDHUP)  ? "POLLRDHUP "  : "",
@@ -153,7 +163,7 @@ void PrintInfoAboutPoll(const std::string client_src_name, const pollfd *pfds, c
         (pfds[client_data.c_socket_pos].revents  & POLLERR) ? "POLLERR " : "");
 }
 
-void ForwardMessageOnline(std::string client_src_name, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, Command *data, itimerspec timer_settings){
+void ForwardMessageOnline(std::string client_src_name,  Command *data){
     std::cout <<client_src_name << " -> " << data->dst_username << ": message sended, bytes " << send(pfds[clients[data->dst_username].c_socket_pos].fd, data, data->len, 0) << std::endl;
 
     int tmp_timer = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
@@ -172,7 +182,7 @@ void ForwardMessageOnline(std::string client_src_name, pollfd *&pfds, std::unord
     tmp = nullptr;
 }
 
-void ForwardAnswerOnline(std::string client_src_name, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, Command *answer){
+void ForwardAnswerOnline(std::string client_src_name, Command *answer){
     std::cout <<client_src_name << " -> " << answer->dst_username << ": message sended, bytes " << send(pfds[clients[answer->dst_username].c_socket_pos].fd, answer, answer->len, 0) << std::endl;
                             
     close(clients[answer->src_username].timers_queue.front());
@@ -190,7 +200,7 @@ void ForwardAnswerOnline(std::string client_src_name, pollfd *&pfds, std::unorde
     clients[answer->src_username].commands_queue.pop();
 }
 
-void SaveMessageOffline(std::string client_src_name, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, Command *data){
+void SaveMessageOffline(const std::string client_src_name, Command *data){
     std::cout <<client_src_name << " -> " << data->dst_username << ": the recipient is offline"<< std::endl;
 
     save(data->dst_username, data);
@@ -208,7 +218,7 @@ void SaveMessageOffline(std::string client_src_name, pollfd *&pfds, std::unorder
 
 }
 
-void IdentifyUser(std::string client_src_name, ClientInfo &client_data, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients,std::unordered_map<int, std::string> &sock_x_name, Command *data){
+void IdentifyUser(const std::string client_src_name, ClientInfo &client_data, Command *data){
     pfds[clients[data->src_username].c_socket_pos].revents = 0;
     sock_x_name.erase(pfds[client_data.c_socket_pos].fd);
     
@@ -223,34 +233,34 @@ void IdentifyUser(std::string client_src_name, ClientInfo &client_data, pollfd *
     load_and_send(data->src_username,pfds,clients);
 }
 
-void Event_ClientProcessing(pollfd *&pfds,std::unordered_map<std::string, ClientInfo> &clients, std::unordered_map<int, std::string> &sock_x_name, unsigned short &num_connections, Command *data, itimerspec timer_settings){
+void Event_ClientProcessing( Command *data){
     for ( auto& [client_src_name, client_data] : clients){
-        PrintInfoAboutPoll(client_src_name, pfds, client_data);
+        PrintInfoAboutPoll(client_src_name, client_data);
 
         //Клиент отключился
         if(pfds[client_data.c_socket_pos].revents & POLLRDHUP || pfds[client_data.c_socket_pos].revents & POLLHUP){
-            Event_DisconnectClient(client_src_name, client_data, pfds,clients, sock_x_name, num_connections);
+            Event_DisconnectClient(client_src_name, client_data);
             break;
         }
 
         //Клиент что-то отправил
         else if(pfds[client_data.c_socket_pos].revents & POLLIN){
 
-            AcceptCommand(data, pfds, client_data);
+            AcceptCommand(data, client_data);
             
             //Пришло новое сообщение от отправителя к получателю, проверка на подключение получателя
             if(clients.count(data->dst_username) && data->type == 0){
-                ForwardMessageOnline(client_src_name, pfds, clients, data, timer_settings);
+                ForwardMessageOnline(client_src_name, data);
             }
 
             //Пришел ответ от получателя, отправитель подключен к серверу
             else if(clients.count(data->dst_username) && data->type == 1){
-                ForwardAnswerOnline(client_src_name, pfds, clients, data);
+                ForwardAnswerOnline(client_src_name, data);
             }
 
             //пришло новое сообщение от отправителя, получатель не подключен к серверу.
             else if(!(clients.count(data->dst_username)) && data->type == 0){
-                SaveMessageOffline(client_src_name, pfds, clients, data);   
+                SaveMessageOffline(client_src_name,data);   
             }
 
             //пришел ответ от получателя, но отправитель не подключен к серверу.
@@ -260,7 +270,7 @@ void Event_ClientProcessing(pollfd *&pfds,std::unordered_map<std::string, Client
 
             //Неидентифицированный пользователь отправил сообщение, тееперь он идентифицирован
             if(data->src_username != client_src_name){
-                IdentifyUser(client_src_name, client_data, pfds, clients, sock_x_name, data);
+                IdentifyUser(client_src_name, client_data, data);
             }
 
             free(data);
@@ -270,12 +280,13 @@ void Event_ClientProcessing(pollfd *&pfds,std::unordered_map<std::string, Client
 
         //Клиент не ответил на сообщение с type = 0 за 3 секунды, поэтому считаем его отключенным
         else if(pfds[client_data.c_timer_pos].revents & POLLIN){
-            Event_DisconnectClient(client_src_name, client_data, pfds,clients, sock_x_name, num_connections);
+            Event_DisconnectClient(client_src_name, client_data);
             break;
         }
     }
     
 }
+
 
 int main(int argc, char* argv[])
 {
@@ -285,18 +296,8 @@ int main(int argc, char* argv[])
     }
 
     int listener;
-    int bytes_read;
-    unsigned short num_connections = 1;//кол-во подключений, всегда равени минимум 1, т.к. в общее кол-во включен слушающий сокет
-    unsigned int num_unind_user = 1;
     char* p_end;
-
-    std::unordered_map<std::string, ClientInfo> clients;
-    std::unordered_map<int, std::string> sock_x_name;
-
-    struct sockaddr_in addr;
-    struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd));
     struct Command *data;
-    struct itimerspec timer_settings;
 
     timer_settings.it_value.tv_sec = 3;
 
@@ -309,10 +310,12 @@ int main(int argc, char* argv[])
 
     struct in_addr inp;
     long port = strtol(argv[2], &p_end, 10);
+
     if(*p_end!='\0' || port<0 || port>65535 || !inet_aton( argv[1] , &inp)/*ip*/){
         perror("Wrong enter, you need to enter separated by spase your IP and Port");
         exit(3);
     }
+
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = inp.s_addr;
@@ -347,7 +350,7 @@ int main(int argc, char* argv[])
         }
         //Если сервер находился в простое 1 час, отключить всех клиентов и выключить сервер
         else if(ready == 0){
-            Event_DisconnectAll(pfds, clients, sock_x_name, num_connections);
+            Event_DisconnectAll(num_connections);
             break;
         }
         //Сработал дескриптор слушающего сокета
@@ -355,7 +358,7 @@ int main(int argc, char* argv[])
             Event_AcceptNewClient(listener,num_connections,pfds,clients, num_unind_user,sock_x_name);
         }
         else{
-            Event_ClientProcessing(pfds,clients, sock_x_name, num_connections, data, timer_settings);
+            Event_ClientProcessing(data);
         }
         std::cout << "end\n\n" << std::endl;
     }
