@@ -76,7 +76,7 @@ void load_and_send(const std::string recipiter,const pollfd* pfds, std::unordere
     remove((recipiter+".bin").c_str());
 }
 
-void Event_AcceptNewClient(int listener, unsigned short &num_connections, pollfd *&pfds, std::unordered_map<std::string, ClientInfo> &clients, unsigned int &num_unind_user, std::unordered_map<int, std::string> &sock_x_name){
+void Event_AcceptNewClient(int listener){
 
     std::cout << "listener" << std::endl;
     int sock = accept(listener, NULL, NULL);
@@ -355,7 +355,7 @@ int main(int argc, char* argv[])
         }
         //Сработал дескриптор слушающего сокета
         else if(pfds[0].revents & POLLIN){
-            Event_AcceptNewClient(listener,num_connections,pfds,clients, num_unind_user,sock_x_name);
+            Event_AcceptNewClient(listener);
         }
         else{
             Event_ClientProcessing(data);
