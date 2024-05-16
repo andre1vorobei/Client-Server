@@ -18,7 +18,7 @@
 struct Header{
     unsigned short len;
     unsigned short type;
-    unsigned int message_ID;
+    unsigned int message_id;
     char src_username[USERNAME_MAX_LEN];
     char dst_username[USERNAME_MAX_LEN];
 };
@@ -33,16 +33,16 @@ void Usage(char *program_name){
     std::cout << "Usage: " << program_name << " <Username> <IP> <Port>" << std::endl;
 }
 
-void SendAnswer(int sock, Command *&data){
-    std::swap(data->header.dst_username, data->header.src_username); //для отправки ответа клиенту отправителю от лица клиента получателя 
+void SendAnswer(int sock, Command *&recv_command){
+    std::swap(recv_command->header.dst_username, recv_command->header.src_username); //для отправки ответа клиенту отправителю от лица клиента получателя 
     
-    data = (Command*)realloc(data, HEADER_LEN+3);//на заголовок и сообщение/ответ "200"
+    recv_command = (Command*)realloc(recv_command, HEADER_LEN+3);//на заголовок и сообщение/ответ "200"
 
-    memcpy(data->message, "200", 3);
-    data->header.len = HEADER_LEN+3;
-    data->header.type = 1;
+    memcpy(recv_command->message, "200", 3);
+    recv_command->header.len = HEADER_LEN+3;
+    recv_command->header.type = 1;
 
-    send(sock, data, data->header.len, 0);
+    send(sock, recv_command, recv_command->header.len, 0);
 
 }
 
@@ -50,12 +50,12 @@ void RecvMessage(int sock){
     
     static int head_recv_bytes = 0;
     static int message_recv_bytes = 0;
-    static Command *data = (Command*)malloc(HEADER_LEN);
+    static Command *recv_command = (Command*)malloc(HEADER_LEN);
     int recv_bytes;
 
     if(head_recv_bytes != HEADER_LEN){
 
-        recv_bytes = recv(sock, (char*)data+head_recv_bytes, HEADER_LEN-head_recv_bytes, 0);
+        recv_bytes = recv(sock, (char*)recv_command+head_recv_bytes, HEADER_LEN-head_recv_bytes, 0);
         if (recv_bytes == -1){
             perror("recv");
             exit(1);
@@ -63,12 +63,12 @@ void RecvMessage(int sock){
 
         head_recv_bytes += recv_bytes;
         if(head_recv_bytes == HEADER_LEN){
-            data = (Command*)realloc(data, data->header.len);
+            recv_command = (Command*)realloc(recv_command, recv_command->header.len+1);
         }
     }
-    else if(message_recv_bytes != data->header.len-HEADER_LEN){
+    else if(message_recv_bytes != recv_command->header.len-HEADER_LEN){
 
-        recv_bytes =  recv(sock, ((char*)data->message)+message_recv_bytes, (data->header.len-HEADER_LEN)-message_recv_bytes, 0);
+        recv_bytes =  recv(sock, ((char*)recv_command->message)+message_recv_bytes, (recv_command->header.len-HEADER_LEN)-message_recv_bytes, 0);
         if (recv_bytes == -1){
             perror("recv");
             exit(1);
@@ -76,38 +76,32 @@ void RecvMessage(int sock){
 
         message_recv_bytes += recv_bytes;
     
-        if(message_recv_bytes == data->header.len-HEADER_LEN){
-            char *mes = new char[data->header.len-HEADER_LEN+1];
-            memcpy(mes, data->message, data->header.len-HEADER_LEN+1);
-            mes[data->header.len-HEADER_LEN] = '\0';
+        if(message_recv_bytes == recv_command->header.len-HEADER_LEN){
 
-            // char *us_name = new char[strlen(data->header.src_username)+1];
-            // memcpy(us_name, data->header.src_username, strlen(data->header.src_username)+1);
-            // us_name[data->header.len-HEADER_LEN] = '\0';
+            recv_command->message[recv_command->header.len-HEADER_LEN] = '\0';
 
-            char us_name[USERNAME_MAX_LEN];
-            memcpy(us_name, data->header.src_username, USERNAME_MAX_LEN);
+            char us_name[USERNAME_MAX_LEN+1]{"\0\0\0\0\0\0\0\0"};
+            memcpy(us_name, recv_command->header.src_username, USERNAME_MAX_LEN);
 
-            if(data->header.type == 0){
-                SendAnswer(sock, data);
-
+            if(recv_command->header.type == 0){
                 std::cout << std::endl;
-                std::cout << "From " << us_name << ": " << mes << "\n" << std::endl;
+                std::cout << "From " << us_name << ": " << recv_command->message << "\n" << std::endl;
+                SendAnswer(sock, recv_command);
+
+               
             }
-            else if(data->header.type == 1){
+            else if(recv_command->header.type == 1){
                 std::cout << std::endl;
-                std::cout<< "User: " << us_name << "  Message_ID: " << data->header.message_ID << "  Status: " << mes << "\n" << std::endl;
+                std::cout<< "User: " << us_name << "  Message_ID: " << recv_command->header.message_id << "  Status: " << recv_command->message << "\n" << std::endl;
             }
-            else if(data->header.type == 2){
+            else if(recv_command->header.type == 2){
                 std::cout << std::endl;
-                std::cout << "Offline from " << us_name << ": " << mes << "\n" << std::endl;
+                std::cout << "Offline from " << us_name << ": " << recv_command->message << "\n" << std::endl;
             }
 
-            free(data);
-            delete mes;
-            mes = nullptr;
+            free(recv_command);
 
-            data = (Command*)malloc(HEADER_LEN);
+            recv_command = (Command*)malloc(HEADER_LEN);
             head_recv_bytes = 0;
             message_recv_bytes = 0;
 
@@ -116,9 +110,9 @@ void RecvMessage(int sock){
 }
 
 
-void SendMessage(int sock, std::string &str_buff, char *own_src_username){
-    static unsigned int _message_ID = 0;
-    char dst_username[USERNAME_MAX_LEN];
+void SendMessage(int sock, std::string &str_buff, char *own_username){
+    static unsigned int message_id_counter = 0;
+    char dst_username[USERNAME_MAX_LEN]{"\0\0\0\0\0\0\0"};
     std::string tmp_dst_username = str_buff.substr(0, str_buff.find(':'));
     std::string message = str_buff.substr(str_buff.find(':')+1);
 
@@ -128,16 +122,16 @@ void SendMessage(int sock, std::string &str_buff, char *own_src_username){
     }
 
     memcpy(dst_username, tmp_dst_username.c_str(), USERNAME_MAX_LEN);
-    
+
     Command *prepared_command = (Command*)malloc(HEADER_LEN+message.length());
 
-    memcpy(prepared_command->header.src_username, own_src_username, USERNAME_MAX_LEN);// own_src_username создается в мейне как char[8], так что он должен полностью копироваться в prepared_command
+    memcpy(prepared_command->header.src_username, own_username, USERNAME_MAX_LEN);
     memcpy(prepared_command->header.dst_username, dst_username, USERNAME_MAX_LEN);
     memcpy(prepared_command->message, message.c_str(), message.length());
 
     prepared_command->header.len = HEADER_LEN+message.length();
-    prepared_command->header.message_ID = _message_ID;
-    _message_ID++;
+    prepared_command->header.message_id = message_id_counter;
+    message_id_counter++;
     prepared_command->header.type = 0;
 
     send(sock, prepared_command, prepared_command->header.len, 0);
@@ -159,7 +153,7 @@ int main(int argc, char* argv[]){
     struct in_addr inp;
     int sock;
     struct sockaddr_in addr;
-    char src_username[USERNAME_MAX_LEN];
+    char src_username[USERNAME_MAX_LEN+1]{"\0\0\0\0\0\0\0\0"};
     char* p_end;
 
     memcpy(src_username, argv[1],USERNAME_MAX_LEN);
@@ -203,13 +197,11 @@ int main(int argc, char* argv[]){
 
     int ready;
 
-    int message_number = 0;
-
     std::string str_buff;
 
     while(true){
 
-        ready = poll(pfds, 2, 1);
+        ready = poll(pfds, 2, 0);
 
         if (ready == -1 && errno != EINTR){
             perror("poll");
