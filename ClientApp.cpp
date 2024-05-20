@@ -121,7 +121,7 @@ void SendMessage(int sock, std::string &str_buff, char *own_username){
         return;
     }
 
-    memcpy(dst_username, tmp_dst_username.c_str(), USERNAME_MAX_LEN);
+    memcpy(dst_username, tmp_dst_username.c_str(), tmp_dst_username.length());
 
     Command *prepared_command = (Command*)malloc(HEADER_LEN+message.length());
 
