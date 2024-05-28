@@ -70,6 +70,7 @@ void load_and_send(const std::string recipiter)
         f2.read((char*)recv_command->message, recv_command->len-HEADER_LEN);
         recv_command->type = 2;
         std::cout <<recv_command->src_username << " -> " << recv_command->dst_username << ": message sended, bytes " << send(pfds[clients[recipiter].c_socket_pos].fd, recv_command, recv_command->len, 0) << std::endl;
+        free(recv_command);
     }
 
    
@@ -92,7 +93,6 @@ void Event_AcceptNewClient(int listener){
     pfds[num_serviced_units*2-3].events = POLLIN | POLLRDHUP | POLLHUP;
     pfds[num_serviced_units*2-2].fd = -1;
     pfds[num_serviced_units*2-2].events = POLLIN;
-    //pfds[0].revents = 0;
 
     clients["unind_user_"+std::to_string(num_unind_user)].c_socket_pos = num_serviced_units*2-3;
 
@@ -113,10 +113,8 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
     std::cout << "User "<< client_src_name << " disconnected" << std:: endl;
 
         close(pfds[client_data.c_socket_pos].fd);
-        // pfds[client_data.c_socket_pos].revents = 0;
 
         close(pfds[client_data.c_timer_pos].fd);
-        // pfds[client_data.c_timer_pos].revents = 0;
 
         while(!client_data.commands_queue.empty()){
             save(client_src_name, client_data.commands_queue.front());
@@ -127,8 +125,7 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
 
         clients[sock_x_name[pfds[num_serviced_units*2-3].fd]].c_socket_pos = client_data.c_socket_pos;
         clients[sock_x_name[pfds[num_serviced_units*2-3].fd]].c_timer_pos = client_data.c_timer_pos;
-
-        sock_x_name.erase(pfds[num_serviced_units*2-3].fd);
+        sock_x_name.erase(pfds[client_data.c_socket_pos].fd);
 
         pfds[client_data.c_socket_pos] = pfds[num_serviced_units*2-3];
         pfds[client_data.c_timer_pos] = pfds[num_serviced_units*2-2];
@@ -142,14 +139,11 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
 
 void Event_DisconnectAll(){
     while(!clients.empty()){
-        for ( auto& [client_src_name, client_data] : clients){
-            Event_DisconnectClient(client_src_name, client_data);
-            break;
-        }
+        Event_DisconnectClient(sock_x_name[pfds[1].fd], clients[sock_x_name[pfds[1].fd]]);
     }
 }
 
-int AcceptCommand(Command *&recv_command, ClientInfo &client_data){
+bool AcceptCommand( ClientInfo &client_data){
 
     int recv_bytes;
 
@@ -164,9 +158,11 @@ int AcceptCommand(Command *&recv_command, ClientInfo &client_data){
 
         if(client_data.head_recv_bytes == HEADER_LEN){
             client_data.current_command = (Command*)realloc(client_data.current_command, client_data.current_command->len);
+            std::cout << client_data.current_command << std::endl;
         }
     }
-    else if(client_data.message_recv_bytes != client_data.current_command->len-HEADER_LEN){
+    else if(client_data.message_recv_bytes != 
+                                            (client_data.current_command->len)-HEADER_LEN){
 
         recv_bytes = recv(pfds[client_data.c_socket_pos].fd, ((char*)client_data.current_command->message)+client_data.message_recv_bytes, (client_data.current_command->len-HEADER_LEN)-client_data.message_recv_bytes, 0);
 
@@ -179,42 +175,22 @@ int AcceptCommand(Command *&recv_command, ClientInfo &client_data){
     
         if(client_data.message_recv_bytes == client_data.current_command->len-HEADER_LEN){
 
-            recv_command = client_data.current_command;//ВАЖНЫЙ МОМЕНТ ДЛЯ ЛОГИКИ
-
-            std::string src_username = recv_command->src_username;
+            std::string src_username = client_data.current_command->src_username;
             if(src_username.length() > 8){src_username = src_username.substr(0, 8);} 
 
-            std::string dst_username = recv_command->dst_username;
+            std::string dst_username = client_data.current_command->dst_username;
             if(dst_username.length() > 8){dst_username = dst_username.substr(0, 8);} 
 
-            std::cout << "TYPE: " << recv_command->type << std::endl;
+            std::cout << "TYPE: " << client_data.current_command->type << std::endl;
             std::cout << "SRC: " << src_username << std::endl;
             std::cout << "DST: " << dst_username << std::endl;
 
             client_data.head_recv_bytes = 0;
             client_data.message_recv_bytes = 0;
-            return 1;
+            return true;
         }
     }
-    return 0;
-
-    // recv_command = (Command*)malloc(HEADER_LEN); // для приема заголовка
-
-    // int bytes_read = recv(pfds[client_data.c_socket_pos].fd, recv_command, HEADER_LEN, 0); // принимаем заголовок
-
-    // std::string src_username = recv_command->src_username;
-    // if(src_username.length() > 8){src_username = src_username.substr(0, 8);} 
-
-    // std::string dst_username = recv_command->dst_username;
-    // if(dst_username.length() > 8){dst_username = dst_username.substr(0, 8);} 
-
-    // std::cout << "TYPE: " << recv_command->type << std::endl;
-    // std::cout << "SRC: " << src_username << std::endl;
-    // std::cout << "DST: " << dst_username << std::endl;
-
-    // recv_command = (Command*)realloc(recv_command, recv_command->len);// выделяем память под сообщение
-
-    // bytes_read = recv(pfds[client_data.c_socket_pos].fd, recv_command->message, recv_command->len-HEADER_LEN, 0);// считываем сообщение
+    return false;
 
 }
 
@@ -244,14 +220,15 @@ void ForwardMessageOnline(std::string src_username, std::string dst_username,  C
     Command *tmp = (Command*)malloc(recv_command->len);
     memcpy(tmp,recv_command,recv_command->len);
     clients[dst_username].commands_queue.push(tmp);
+    free(tmp);
     tmp = nullptr;
+    
 }
 
 void ForwardAnswerOnline(std::string src_username, std::string dst_username, Command *answer){
     std::cout << src_username << " -> " << dst_username << ": message sended, bytes " << send(pfds[clients[dst_username].c_socket_pos].fd, answer, answer->len, 0) << std::endl;
                             
     close(clients[src_username].timers_queue.front());
-    // pfds[clients[src_username].c_timer_pos].revents = 0;
 
     clients[src_username].timers_queue.pop();
     
@@ -271,9 +248,9 @@ void SaveMessageOffline(const std::string src_username, std::string dst_username
     save(dst_username, recv_command);
 
     std::swap(recv_command->dst_username, recv_command->src_username); //для отправки ответа клиенту отправителю от лица неподключенного клиента получателя 
-    std::cout << 1 << std::endl;
+
     recv_command = (Command*)realloc(recv_command, HEADER_LEN+3);//на заголовок и сообщение/ответ "300"
-std::cout << 2 << std::endl;
+
     memcpy(recv_command->message, "300", 3);
     recv_command->len = HEADER_LEN+3;
     recv_command->type = 1;
@@ -292,14 +269,13 @@ void IdentifyUser(const std::string client_src_name, ClientInfo &client_data, Co
     
     clients[src_username].c_socket_pos = client_data.c_socket_pos;
     clients[src_username].c_timer_pos = client_data.c_timer_pos;
-    clients[src_username].current_command = (Command*)malloc(HEADER_LEN);
+    clients[src_username].current_command = client_data.current_command;
     clients[src_username].head_recv_bytes = 0;
     clients[src_username].message_recv_bytes = 0;
 
     sock_x_name[pfds[client_data.c_socket_pos].fd] = src_username;
-    
+
     clients.erase(client_src_name);
-    free(client_data.current_command);
     
     std::cout<<" LOAD " << src_username << std::endl;
     load_and_send(src_username);
@@ -307,7 +283,9 @@ void IdentifyUser(const std::string client_src_name, ClientInfo &client_data, Co
 
 void Event_ClientProcessing(){
     for ( auto& [client_src_name, client_data] : clients){
+
         PrintInfoAboutPoll(client_src_name, client_data);
+
         //Клиент отключился
         if(pfds[client_data.c_socket_pos].revents & POLLRDHUP || pfds[client_data.c_socket_pos].revents & POLLHUP){
             Event_DisconnectClient(client_src_name, client_data);
@@ -316,33 +294,32 @@ void Event_ClientProcessing(){
 
         //Клиент что-то отправил
         else if(pfds[client_data.c_socket_pos].revents & POLLIN){
-            struct Command *recv_command;
 
-            if(AcceptCommand(recv_command, client_data)){
-                std::string src_username = recv_command->src_username;
+            if(AcceptCommand(client_data)){
+                std::string src_username = client_data.current_command->src_username;
                 if(src_username.length() > USERNAME_MAX_LEN){src_username = src_username.substr(0, USERNAME_MAX_LEN);} 
 
-                std::string dst_username = recv_command->dst_username;
+                std::string dst_username = client_data.current_command->dst_username;
                 if(dst_username.length() > USERNAME_MAX_LEN){dst_username = dst_username.substr(0, USERNAME_MAX_LEN);} 
 
                 //Неидентифицированный пользователь отправил сообщение, тееперь он идентифицирован
                 if(src_username != client_src_name){
-                    IdentifyUser(client_src_name, client_data, recv_command);
+                    IdentifyUser(client_src_name, client_data, client_data.current_command);
                 }
                 
                 //Пришло новое сообщение от отправителя к получателю, проверка на подключение получателя
-                if(clients.count(dst_username) && recv_command->type == 0){
-                    ForwardMessageOnline(src_username, dst_username, recv_command);
+                if(clients.count(dst_username) && client_data.current_command->type == 0){
+                    ForwardMessageOnline(src_username, dst_username,client_data.current_command);
                 }
 
                 //Пришел ответ от получателя, отправитель подключен к серверу
-                else if(clients.count(dst_username) && recv_command->type == 1){
-                    ForwardAnswerOnline(src_username, dst_username, recv_command);
+                else if(clients.count(dst_username) && client_data.current_command->type == 1){
+                    ForwardAnswerOnline(src_username, dst_username, client_data.current_command);
                 }
 
                 //пришло новое сообщение от отправителя, получатель не подключен к серверу.
-                else if(!(clients.count(dst_username)) && recv_command->type == 0){
-                    SaveMessageOffline(src_username, dst_username, recv_command);   
+                else if(!(clients.count(dst_username)) && client_data.current_command->type == 0){
+                    SaveMessageOffline(src_username, dst_username, client_data.current_command);   
                 }
 
                 //пришел ответ от получателя, но отправитель не подключен к серверу.
@@ -350,9 +327,11 @@ void Event_ClientProcessing(){
                     clients[src_username].commands_queue.pop();
                 }
 
-                free(recv_command);
-                recv_command = nullptr;
-                client_data.current_command = (Command*)malloc(HEADER_LEN);
+                // std::cout << "CLEAR << " << client_data.current_command->type << " " << client_data.current_command->message_id << std::endl;
+                // free(client_data.current_command);
+                // client_data.current_command = (Command*)malloc(HEADER_LEN);
+                // client_data.current_command = (Command*)realloc(client_data.current_command, HEADER_LEN);
+
                 break;
             }
         }
