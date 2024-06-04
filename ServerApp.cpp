@@ -1,4 +1,4 @@
-//Запуск сервера: в командной строке указать сначала свой айпи, затем порт
+//Запуск сервера: в командной строке указать порт
 
 #include<iostream>
 #include<fstream>
@@ -42,7 +42,7 @@ std::unordered_map<int, std::string> sock_x_name;
 struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd));
 struct itimerspec timer_settings;
 struct sockaddr_in addr;
-unsigned short num_serviced_units = 1;//всегда равени минимум 1, т.к. в общее кол-во включен слушающий сокет
+unsigned short number_of_hosts = 1;//всегда равени минимум 1, т.к. в общее кол-во включен слушающий сокет
 unsigned int num_unind_user = 1;
 
 
@@ -62,20 +62,24 @@ void load_and_send(const std::string recipiter)
     Command *recv_command;
     
     std::ifstream f2(recipiter+".bin", std::ios::binary | std::ios::in);
-    
-    while(f2.peek() != EOF){
-        recv_command = (Command*)malloc(HEADER_LEN);
-        f2.read((char*)recv_command, HEADER_LEN);
-        recv_command = (Command*)realloc(recv_command, recv_command->len);
-        f2.read((char*)recv_command->message, recv_command->len-HEADER_LEN);
-        recv_command->type = 2;
-        std::cout <<recv_command->src_username << " -> " << recv_command->dst_username << ": message sended, bytes " << send(pfds[clients[recipiter].c_socket_pos].fd, recv_command, recv_command->len, 0) << std::endl;
-        free(recv_command);
-    }
 
-   
-    std::cout << "File is empty" << std::endl;
-    std::cout << "All messages sent" << std::endl;
+    if(f2.peek() == EOF){
+        std::cout << "File is empty" << std::endl;
+    }
+    else{
+        while(f2.peek() != EOF){
+            recv_command = (Command*)malloc(HEADER_LEN);
+            f2.read((char*)recv_command, HEADER_LEN);
+            recv_command = (Command*)realloc(recv_command, recv_command->len);
+            f2.read((char*)recv_command->message, recv_command->len-HEADER_LEN);
+            recv_command->type = 2;
+            std::cout <<recv_command->src_username << " -> " << recv_command->dst_username << ": message sended, bytes " << send(pfds[clients[recipiter].c_socket_pos].fd, recv_command, recv_command->len, 0) << std::endl;
+            free(recv_command);
+        }
+        std::cout << "All messages sent" << std::endl;
+
+    }
+    
     f2.close();
     remove((recipiter+".bin").c_str());
 }
@@ -85,18 +89,18 @@ void Event_AcceptNewClient(int listener){
     std::cout << "listener" << std::endl;
     int sock = accept(listener, NULL, NULL);
 
-    num_serviced_units++;
+    number_of_hosts++;
     //при подключении одного клиента количество дескрипторов, которые слушает poll, увеличивается на 2, т.е. +1 сокет и +1 таймер
-    pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(num_serviced_units*2-1));
+    pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(number_of_hosts*2-1));
 
-    pfds[num_serviced_units*2-3].fd = sock;
-    pfds[num_serviced_units*2-3].events = POLLIN | POLLRDHUP | POLLHUP;
-    pfds[num_serviced_units*2-2].fd = -1;
-    pfds[num_serviced_units*2-2].events = POLLIN;
+    pfds[number_of_hosts*2-3].fd = sock;
+    pfds[number_of_hosts*2-3].events = POLLIN | POLLRDHUP | POLLHUP;
+    pfds[number_of_hosts*2-2].fd = -1;
+    pfds[number_of_hosts*2-2].events = POLLIN;
 
-    clients["unind_user_"+std::to_string(num_unind_user)].c_socket_pos = num_serviced_units*2-3;
+    clients["unind_user_"+std::to_string(num_unind_user)].c_socket_pos = number_of_hosts*2-3;
 
-    clients["unind_user_"+std::to_string(num_unind_user)].c_timer_pos = num_serviced_units*2-2;
+    clients["unind_user_"+std::to_string(num_unind_user)].c_timer_pos = number_of_hosts*2-2;
 
     clients["unind_user_"+std::to_string(num_unind_user)].head_recv_bytes = 0;
 
@@ -123,18 +127,18 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
 
         free(client_data.current_command);
 
-        clients[sock_x_name[pfds[num_serviced_units*2-3].fd]].c_socket_pos = client_data.c_socket_pos;
-        clients[sock_x_name[pfds[num_serviced_units*2-3].fd]].c_timer_pos = client_data.c_timer_pos;
+        clients[sock_x_name[pfds[number_of_hosts*2-3].fd]].c_socket_pos = client_data.c_socket_pos;
+        clients[sock_x_name[pfds[number_of_hosts*2-3].fd]].c_timer_pos = client_data.c_timer_pos;
         sock_x_name.erase(pfds[client_data.c_socket_pos].fd);
 
-        pfds[client_data.c_socket_pos] = pfds[num_serviced_units*2-3];
-        pfds[client_data.c_timer_pos] = pfds[num_serviced_units*2-2];
+        pfds[client_data.c_socket_pos] = pfds[number_of_hosts*2-3];
+        pfds[client_data.c_timer_pos] = pfds[number_of_hosts*2-2];
         
         clients.erase(client_src_name);
 
-        num_serviced_units--;
+        number_of_hosts--;
         //при отключении одного клиента количество дескрипторов, которые слушает poll, уменьшается на 2, т.е. -1 сокет и -1 таймер
-        pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(num_serviced_units*2-1));
+        pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(number_of_hosts*2-1));
 }
 
 void Event_DisconnectAll(){
@@ -158,7 +162,6 @@ bool AcceptCommand( ClientInfo &client_data){
 
         if(client_data.head_recv_bytes == HEADER_LEN){
             client_data.current_command = (Command*)realloc(client_data.current_command, client_data.current_command->len);
-            std::cout << client_data.current_command << std::endl;
         }
     }
     else if(client_data.message_recv_bytes != 
@@ -276,6 +279,8 @@ void IdentifyUser(const std::string client_src_name, ClientInfo &client_data, Co
     sock_x_name[pfds[client_data.c_socket_pos].fd] = src_username;
 
     clients.erase(client_src_name);
+
+    client_data = clients[src_username];
     
     std::cout<<" LOAD " << src_username << std::endl;
     load_and_send(src_username);
@@ -326,11 +331,6 @@ void Event_ClientProcessing(){
                 else{
                     clients[src_username].commands_queue.pop();
                 }
-
-                // std::cout << "CLEAR << " << client_data.current_command->type << " " << client_data.current_command->message_id << std::endl;
-                // free(client_data.current_command);
-                // client_data.current_command = (Command*)malloc(HEADER_LEN);
-                // client_data.current_command = (Command*)realloc(client_data.current_command, HEADER_LEN);
 
                 break;
             }
@@ -397,7 +397,7 @@ int main(int argc, char* argv[])
         //далее на нечетных местах(1, 3, 5...) стоят дескрипторы сокетов подключенных к серверу клиентов
         //на четных местах(2, 4, 6...) стоят дескрипторы таймеров принятых клиентов
         //в итоге получается пара дескрипторов [сокет, таймер] для одного клиента в общем массиве дескрипторов. 
-        ready = poll(pfds, num_serviced_units*2-1, 3600000);
+        ready = poll(pfds, number_of_hosts*2-1, 3600000);
         
         printf("About to poll:\n");
         if (ready == -1 && errno != EINTR){
@@ -409,13 +409,14 @@ int main(int argc, char* argv[])
             Event_DisconnectAll();
             break;
         }
-        //Сработал дескриптор слушающего сокета
-        else if(pfds[0].revents & POLLIN){
-            Event_AcceptNewClient(listener);
-        }
-        else{
+        else {
+            //Сработал дескриптор слушающего сокета
+            if(pfds[0].revents & POLLIN){
+                Event_AcceptNewClient(listener);
+            }
             Event_ClientProcessing();
         }
+         
         std::cout << "end\n\n" << std::endl;
     }
     free(pfds);
