@@ -13,6 +13,7 @@
 #include<string.h>
 #include <sys/timerfd.h>
 #include<queue>
+#include <time.h> 
 
 #define USERNAME_MAX_LEN 8
 #define HEADER_LEN 24
@@ -42,7 +43,7 @@ std::unordered_map<int, std::string> sock_x_name;
 struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd));
 struct itimerspec timer_settings;
 struct sockaddr_in addr;
-unsigned short number_of_hosts = 1;//всегда равени минимум 1, т.к. в общее кол-во включен слушающий сокет
+unsigned short num_clients = 0;//всегда равени минимум 1, т.к. в общее кол-во включен слушающий сокет
 unsigned int num_unind_user = 1;
 
 
@@ -89,18 +90,20 @@ void Event_AcceptNewClient(int listener){
     std::cout << "listener" << std::endl;
     int sock = accept(listener, NULL, NULL);
 
-    number_of_hosts++;
+    num_clients++;
     //при подключении одного клиента количество дескрипторов, которые слушает poll, увеличивается на 2, т.е. +1 сокет и +1 таймер
-    pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(number_of_hosts*2-1));
+    pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(num_clients*2+1));
 
-    pfds[number_of_hosts*2-3].fd = sock;
-    pfds[number_of_hosts*2-3].events = POLLIN | POLLRDHUP | POLLHUP;
-    pfds[number_of_hosts*2-2].fd = -1;
-    pfds[number_of_hosts*2-2].events = POLLIN;
+    pfds[num_clients*2-1].fd = sock;
+    pfds[num_clients*2-1].events = POLLIN | POLLRDHUP | POLLHUP;
+    pfds[num_clients*2-1].revents = 0;
 
-    clients["unind_user_"+std::to_string(num_unind_user)].c_socket_pos = number_of_hosts*2-3;
+    pfds[num_clients*2].fd = -1;
+    pfds[num_clients*2].events = POLLIN;
 
-    clients["unind_user_"+std::to_string(num_unind_user)].c_timer_pos = number_of_hosts*2-2;
+    clients["unind_user_"+std::to_string(num_unind_user)].c_socket_pos = num_clients*2-1;
+
+    clients["unind_user_"+std::to_string(num_unind_user)].c_timer_pos = num_clients*2;
 
     clients["unind_user_"+std::to_string(num_unind_user)].head_recv_bytes = 0;
 
@@ -127,18 +130,18 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
 
         free(client_data.current_command);
 
-        clients[sock_x_name[pfds[number_of_hosts*2-3].fd]].c_socket_pos = client_data.c_socket_pos;
-        clients[sock_x_name[pfds[number_of_hosts*2-3].fd]].c_timer_pos = client_data.c_timer_pos;
+        clients[sock_x_name[pfds[num_clients*2-1].fd]].c_socket_pos = client_data.c_socket_pos;
+        clients[sock_x_name[pfds[num_clients*2-1].fd]].c_timer_pos = client_data.c_timer_pos;
         sock_x_name.erase(pfds[client_data.c_socket_pos].fd);
 
-        pfds[client_data.c_socket_pos] = pfds[number_of_hosts*2-3];
-        pfds[client_data.c_timer_pos] = pfds[number_of_hosts*2-2];
+        pfds[client_data.c_socket_pos] = pfds[num_clients*2-1];
+        pfds[client_data.c_timer_pos] = pfds[num_clients*2];
         
         clients.erase(client_src_name);
 
-        number_of_hosts--;
+        num_clients--;
         //при отключении одного клиента количество дескрипторов, которые слушает poll, уменьшается на 2, т.е. -1 сокет и -1 таймер
-        pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(number_of_hosts*2-1));
+        pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(num_clients*2+1));
 }
 
 void Event_DisconnectAll(){
@@ -386,7 +389,14 @@ int main(int argc, char* argv[])
     timer_settings.it_value.tv_sec = 3;
     int ready;
 
-    listen(listener, 3);
+    /*
+    Предположим, что рабочий чат рассчитан на 10 работников.
+    Т.к. подключение одного пользователя к серверу происходит довольно быстро, 
+    очереди размера 5 достаточно, чтобы сервер выдержал последовательное подключение группы клиентов.
+    Если же в силу обстоятельств единовременно к серверу начнет подключаться 
+    группа из более чем 5 пользователей, оставшимся придется попытаться подключиться еще раз. 
+    */
+    listen(listener, 5);
     
     std::cout << "Server is runnig" << std::endl;
     
@@ -397,7 +407,7 @@ int main(int argc, char* argv[])
         //далее на нечетных местах(1, 3, 5...) стоят дескрипторы сокетов подключенных к серверу клиентов
         //на четных местах(2, 4, 6...) стоят дескрипторы таймеров принятых клиентов
         //в итоге получается пара дескрипторов [сокет, таймер] для одного клиента в общем массиве дескрипторов. 
-        ready = poll(pfds, number_of_hosts*2-1, 3600000);
+        ready = poll(pfds, num_clients*2+1, 3600000);
         
         printf("About to poll:\n");
         if (ready == -1 && errno != EINTR){
@@ -410,12 +420,22 @@ int main(int argc, char* argv[])
             break;
         }
         else {
-            //Сработал дескриптор слушающего сокета
             if(pfds[0].revents & POLLIN){
+                //Сработал дескриптор слушающего сокета
+
+                clock_t start = clock();
+
                 Event_AcceptNewClient(listener);
+
+                clock_t end = clock();
+                double seconds = (double)(end - start) / CLOCKS_PER_SEC;
+
+                std::cout << "Client connection time: " << seconds << std::endl;
+
             }
+
             Event_ClientProcessing();
-        }
+        } 
          
         std::cout << "end\n\n" << std::endl;
     }

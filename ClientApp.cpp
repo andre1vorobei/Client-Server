@@ -179,7 +179,7 @@ int main(int argc, char* argv[]){
     
     if(connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
-        perror("Problem with connection");
+        perror("Problem with connection, try again");
         exit(1);
     }
     else{
