@@ -43,7 +43,7 @@ std::unordered_map<int, std::string> sock_x_name;
 struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd));
 struct itimerspec timer_settings;
 struct sockaddr_in addr;
-unsigned short num_clients = 0;//всегда равени минимум 1, т.к. в общее кол-во включен слушающий сокет
+unsigned short num_clients = 0;
 unsigned int num_unind_user = 1;
 
 

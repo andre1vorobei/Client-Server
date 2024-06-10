@@ -8,7 +8,6 @@
 #include<arpa/inet.h>
 #include<poll.h>
 #include<string.h>
-
 #include <unistd.h>
 
 #define USERNAME_MAX_LEN 8
@@ -186,7 +185,7 @@ int main(int argc, char* argv[]){
         std::cout << "Connection success\n" << std::endl;
         std::cout << "Available commands:\n" << std::endl;
         std::cout << "<dst_username>:<message> - send the message to another user\n" << std::endl;
-        std::cout << "exit - lol to exit\n\n" << std::endl;
+        std::cout << "exit - exit\n\n" << std::endl;
     }
 
     pollfd *pfds = (pollfd*)malloc(sizeof(pollfd)*2);
