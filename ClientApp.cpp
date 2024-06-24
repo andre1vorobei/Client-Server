@@ -33,6 +33,7 @@ void Usage(char *program_name){
 }
 
 void SendAnswer(int sock, Command *&recv_command){
+
     std::swap(recv_command->header.dst_username, recv_command->header.src_username); //для отправки ответа клиенту отправителю от лица клиента получателя 
     
     recv_command = (Command*)realloc(recv_command, HEADER_LEN+3);//на заголовок и сообщение/ответ "200"
@@ -55,12 +56,14 @@ void RecvMessage(int sock){
     if(head_recv_bytes != HEADER_LEN){
 
         recv_bytes = recv(sock, (char*)recv_command+head_recv_bytes, HEADER_LEN-head_recv_bytes, 0);
+
         if (recv_bytes == -1){
             perror("recv");
             exit(1);
         }
 
         head_recv_bytes += recv_bytes;
+
         if(head_recv_bytes == HEADER_LEN){
             recv_command = (Command*)realloc(recv_command, recv_command->header.len+1);
         }
@@ -68,6 +71,7 @@ void RecvMessage(int sock){
     else if(message_recv_bytes != recv_command->header.len-HEADER_LEN){
 
         recv_bytes =  recv(sock, ((char*)recv_command->message)+message_recv_bytes, (recv_command->header.len-HEADER_LEN)-message_recv_bytes, 0);
+
         if (recv_bytes == -1){
             perror("recv");
             exit(1);
@@ -80,14 +84,13 @@ void RecvMessage(int sock){
             recv_command->message[recv_command->header.len-HEADER_LEN] = '\0';
 
             char us_name[USERNAME_MAX_LEN+1]{"\0\0\0\0\0\0\0\0"};
+
             memcpy(us_name, recv_command->header.src_username, USERNAME_MAX_LEN);
 
             if(recv_command->header.type == 0){
                 std::cout << std::endl;
                 std::cout << "From " << us_name << ": " << recv_command->message << "\n" << std::endl;
                 SendAnswer(sock, recv_command);
-
-               
             }
             else if(recv_command->header.type == 1){
                 std::cout << std::endl;
@@ -103,7 +106,6 @@ void RecvMessage(int sock){
             recv_command = (Command*)malloc(HEADER_LEN);
             head_recv_bytes = 0;
             message_recv_bytes = 0;
-
         }
     }
 }
@@ -139,10 +141,12 @@ void SendMessage(int sock, std::string &str_buff, char *own_username){
 }
 
 int main(int argc, char* argv[]){
+
     if(argc != 4){
         Usage(argv[0]);
         exit(1);
     }
+
     if((strlen(argv[1])>USERNAME_MAX_LEN) ){
         Usage(argv[0]);
         perror("Too long username, max length is 8");
@@ -157,6 +161,7 @@ int main(int argc, char* argv[]){
 
     memcpy(src_username, argv[1],USERNAME_MAX_LEN);
     long port = strtol(argv[3], &p_end, 10);
+    
     if(*p_end != '\0' || port < 0 || port > 65535 || !inet_aton(argv[2], &inp)/*ip*/){
         Usage(argv[0]);
         perror("Wrong format of IP or Port");
@@ -165,7 +170,7 @@ int main(int argc, char* argv[]){
 
     addr.sin_family = AF_INET;
     inet_aton("192.168.10.126", &inp);
-    addr.sin_port = htons(port );
+    addr.sin_port = htons(port);
     addr.sin_addr.s_addr = inp.s_addr;
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -185,7 +190,7 @@ int main(int argc, char* argv[]){
         std::cout << "Connection success\n" << std::endl;
         std::cout << "Available commands:\n" << std::endl;
         std::cout << "<dst_username>:<message> - send the message to another user\n" << std::endl;
-        std::cout << "exit - exit\n\n" << std::endl;
+        std::cout << "exit - to exit\n\n" << std::endl;
     }
 
     pollfd *pfds = (pollfd*)malloc(sizeof(pollfd)*2);
