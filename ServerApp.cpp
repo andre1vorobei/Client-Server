@@ -39,7 +39,7 @@ struct ClientInfo{
 };
 
 std::unordered_map<std::string, ClientInfo> clients;
-std::unordered_map<int, std::string> sock_x_name;
+std::unordered_map<int, std::string> sock_to_name;
 struct pollfd *pfds = (pollfd*)malloc(sizeof(struct pollfd));
 struct itimerspec timer_settings;
 struct sockaddr_in addr;
@@ -101,22 +101,24 @@ void Event_AcceptNewClient(int listener){
     pfds[num_clients*2].fd = -1;
     pfds[num_clients*2].events = POLLIN;
 
-    clients["unind_user_"+std::to_string(num_unind_user)].c_socket_pos = num_clients*2-1;
+    ClientInfo &new_client = clients["unind_user_"+std::to_string(num_unind_user)];
 
-    clients["unind_user_"+std::to_string(num_unind_user)].c_timer_pos = num_clients*2;
+    new_client.c_socket_pos = num_clients*2-1;
 
-    clients["unind_user_"+std::to_string(num_unind_user)].head_recv_bytes = 0;
+    new_client.c_timer_pos = num_clients*2;
 
-    clients["unind_user_"+std::to_string(num_unind_user)].message_recv_bytes = 0;
+    new_client.head_recv_bytes = 0;
 
-    clients["unind_user_"+std::to_string(num_unind_user)].current_command = (Command*)malloc(HEADER_LEN);
+    new_client.message_recv_bytes = 0;
 
-    sock_x_name[sock] = "unind_user_"+std::to_string(num_unind_user);
+    new_client.current_command = (Command*)malloc(HEADER_LEN);
+
+    sock_to_name[sock] = "unind_user_"+std::to_string(num_unind_user);
 
     num_unind_user++;
 }
 
-void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data){
+void DisconnectClient(std::string client_src_name, ClientInfo &client_data){
     std::cout << "User "<< client_src_name << " disconnected" << std:: endl;
 
         close(pfds[client_data.c_socket_pos].fd);
@@ -130,13 +132,15 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
 
         free(client_data.current_command);
 
-        clients[sock_x_name[pfds[num_clients*2-1].fd]].c_socket_pos = client_data.c_socket_pos;
-        clients[sock_x_name[pfds[num_clients*2-1].fd]].c_timer_pos = client_data.c_timer_pos;
-        sock_x_name.erase(pfds[client_data.c_socket_pos].fd);
+        clients[sock_to_name[pfds[num_clients*2-1].fd]].c_socket_pos = client_data.c_socket_pos;
+        clients[sock_to_name[pfds[num_clients*2-1].fd]].c_timer_pos = client_data.c_timer_pos;
+        int sock_to_delete = pfds[client_data.c_socket_pos].fd;
+        
 
         pfds[client_data.c_socket_pos] = pfds[num_clients*2-1];
         pfds[client_data.c_timer_pos] = pfds[num_clients*2];
         
+        sock_to_name.erase(sock_to_delete);
         clients.erase(client_src_name);
 
         num_clients--;
@@ -146,7 +150,7 @@ void Event_DisconnectClient(std::string client_src_name, ClientInfo &client_data
 
 void Event_DisconnectAll(){
     while(!clients.empty()){
-        Event_DisconnectClient(sock_x_name[pfds[1].fd], clients[sock_x_name[pfds[1].fd]]);
+        DisconnectClient(sock_to_name[pfds[1].fd], clients[sock_to_name[pfds[1].fd]]);
     }
 }
 
@@ -201,17 +205,19 @@ bool AcceptCommand( ClientInfo &client_data){
 }
 
 void PrintInfoAboutPoll(const std::string client_src_name, const ClientInfo &client_data){
+    pollfd pfds_tmp = pfds[client_data.c_socket_pos];
     printf("  fd=%s; events: %s%s%s%s\n", client_src_name.c_str(),
-        (pfds[client_data.c_socket_pos].revents & POLLHUP) ? "POLLHUP " : "",
-        (pfds[client_data.c_socket_pos].revents & POLLRDHUP)  ? "POLLRDHUP "  : "",
-        (pfds[client_data.c_socket_pos].revents  & POLLIN)  ? "POLLIN "  : "",
-        (pfds[client_data.c_socket_pos].revents  & POLLERR) ? "POLLERR " : "");
+        (pfds_tmp.revents & POLLHUP) ? "POLLHUP " : "",
+        (pfds_tmp.revents & POLLRDHUP)  ? "POLLRDHUP "  : "",
+        (pfds_tmp.revents  & POLLIN)  ? "POLLIN "  : "",
+        (pfds_tmp.revents  & POLLERR) ? "POLLERR " : "");
 }
 
-void ForwardMessageOnline(std::string src_username, std::string dst_username,  Command *recv_command){
+void ForwardMessage(std::string src_username, std::string dst_username,  Command *recv_command){
 
 
-    std::cout << src_username << " -> " << dst_username << ": message sended, bytes " << send(pfds[clients[dst_username].c_socket_pos].fd, recv_command, recv_command->len, 0) << std::endl;
+    std::cout << src_username << " -> " << dst_username << ": message sended, bytes " 
+        << send(pfds[clients[dst_username].c_socket_pos].fd, recv_command, recv_command->len, 0) << std::endl;
 
     int tmp_timer = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
     if (timerfd_settime(tmp_timer, 0, &timer_settings, 0) == -1){
@@ -231,8 +237,9 @@ void ForwardMessageOnline(std::string src_username, std::string dst_username,  C
     
 }
 
-void ForwardAnswerOnline(std::string src_username, std::string dst_username, Command *answer){
-    std::cout << src_username << " -> " << dst_username << ": message sended, bytes " << send(pfds[clients[dst_username].c_socket_pos].fd, answer, answer->len, 0) << std::endl;
+void ForwardReply(std::string src_username, std::string dst_username, Command *answer){
+    std::cout << src_username << " -> " << dst_username << ": message sended, bytes " 
+        << send(pfds[clients[dst_username].c_socket_pos].fd, answer, answer->len, 0) << std::endl;
                             
     close(clients[src_username].timers_queue.front());
 
@@ -248,7 +255,7 @@ void ForwardAnswerOnline(std::string src_username, std::string dst_username, Com
     clients[src_username].commands_queue.pop();
 }
 
-void SaveMessageOffline(const std::string src_username, std::string dst_username, Command *&recv_command){
+void SaveMessage(const std::string src_username, std::string dst_username, Command *&recv_command){
     std::cout <<src_username << " -> " << dst_username << ": the recipient is offline"<< std::endl;
 
     save(dst_username, recv_command);
@@ -271,37 +278,39 @@ void IdentifyUser(const std::string client_src_name, ClientInfo &client_data, Co
 
     if(src_username.length()>8){src_username = src_username.substr(0,8); std::cout << src_username << std::endl;}
 
-    sock_x_name.erase(pfds[client_data.c_socket_pos].fd);
-    
-    clients[src_username].c_socket_pos = client_data.c_socket_pos;
-    clients[src_username].c_timer_pos = client_data.c_timer_pos;
-    clients[src_username].current_command = client_data.current_command;
-    clients[src_username].head_recv_bytes = 0;
-    clients[src_username].message_recv_bytes = 0;
+    sock_to_name.erase(pfds[client_data.c_socket_pos].fd);
 
-    sock_x_name[pfds[client_data.c_socket_pos].fd] = src_username;
+    ClientInfo &current_client = clients[src_username];
+
+    current_client.c_socket_pos = client_data.c_socket_pos;
+    current_client.c_timer_pos = client_data.c_timer_pos;
+    current_client.current_command = client_data.current_command;
+    current_client.head_recv_bytes = 0;
+    current_client.message_recv_bytes = 0;
+
+    sock_to_name[pfds[client_data.c_socket_pos].fd] = src_username;
 
     clients.erase(client_src_name);
 
-    client_data = clients[src_username];
+    client_data = current_client;
     
     std::cout<<" LOAD " << src_username << std::endl;
     load_and_send(src_username);
 }
 
 void Event_ClientProcessing(){
-    for ( auto& [client_src_name, client_data] : clients){
-
+    for(int sock_num = 1; sock_num < num_clients*2; sock_num = sock_num+2){
+        std::string &client_src_name = sock_to_name[pfds[sock_num].fd] ;
+        ClientInfo &client_data = clients[client_src_name];
         PrintInfoAboutPoll(client_src_name, client_data);
 
-        //Клиент отключился
-        if(pfds[client_data.c_socket_pos].revents & POLLRDHUP || pfds[client_data.c_socket_pos].revents & POLLHUP){
-            Event_DisconnectClient(client_src_name, client_data);
-            break;
-        }
+        if(pfds[client_data.c_socket_pos].revents & POLLRDHUP || pfds[client_data.c_socket_pos].revents & POLLHUP || pfds[client_data.c_timer_pos].revents & POLLIN){
+            DisconnectClient(client_src_name, client_data);
+            sock_num = sock_num-2;
+            continue;
+        }   
 
-        //Клиент что-то отправил
-        else if(pfds[client_data.c_socket_pos].revents & POLLIN){
+        if(pfds[client_data.c_socket_pos].revents & POLLIN){
 
             if(AcceptCommand(client_data)){
                 std::string src_username = client_data.current_command->src_username;
@@ -310,40 +319,32 @@ void Event_ClientProcessing(){
                 std::string dst_username = client_data.current_command->dst_username;
                 if(dst_username.length() > USERNAME_MAX_LEN){dst_username = dst_username.substr(0, USERNAME_MAX_LEN);} 
 
-                //Неидентифицированный пользователь отправил сообщение, тееперь он идентифицирован
-                if(src_username != client_src_name){
+                if(client_src_name.find("unind_user_") != std::string::npos){
+                // if(src_username != client_src_name){
                     IdentifyUser(client_src_name, client_data, client_data.current_command);
                 }
                 
-                //Пришло новое сообщение от отправителя к получателю, проверка на подключение получателя
-                if(clients.count(dst_username) && client_data.current_command->type == 0){
-                    ForwardMessageOnline(src_username, dst_username,client_data.current_command);
+                if(clients.count(dst_username)){
+                    if(client_data.current_command->type == 0){
+                        ForwardMessage(src_username, dst_username,client_data.current_command);
+                    }
+                
+                    if(client_data.current_command->type == 1){
+                        ForwardReply(src_username, dst_username, client_data.current_command);
+                    }
+
+                    continue;
                 }
 
-                //Пришел ответ от получателя, отправитель подключен к серверу
-                else if(clients.count(dst_username) && client_data.current_command->type == 1){
-                    ForwardAnswerOnline(src_username, dst_username, client_data.current_command);
+                if(!(clients.count(dst_username)) && client_data.current_command->type == 0){
+                    SaveMessage(src_username, dst_username, client_data.current_command);   
+                    continue;
                 }
 
-                //пришло новое сообщение от отправителя, получатель не подключен к серверу.
-                else if(!(clients.count(dst_username)) && client_data.current_command->type == 0){
-                    SaveMessageOffline(src_username, dst_username, client_data.current_command);   
-                }
-
-                //пришел ответ от получателя, но отправитель не подключен к серверу.
-                else{
-                    clients[src_username].commands_queue.pop();
-                }
-
-                break;
+                clients[src_username].commands_queue.pop();
             }
         }
 
-        //Клиент не ответил на сообщение с type = 0 за 3 секунды, поэтому считаем его отключенным
-        else if(pfds[client_data.c_timer_pos].revents & POLLIN){
-            Event_DisconnectClient(client_src_name, client_data);
-            break;
-        }
     }
     
 }
@@ -389,13 +390,6 @@ int main(int argc, char* argv[])
     timer_settings.it_value.tv_sec = 3;
     int ready;
 
-    /*
-    Предположим, что рабочий чат рассчитан на 10 работников.
-    Т.к. подключение одного пользователя к серверу происходит довольно быстро, 
-    очереди размера 5 достаточно, чтобы сервер выдержал последовательное подключение группы клиентов.
-    Если же в силу обстоятельств единовременно к серверу начнет подключаться 
-    группа из более чем 5 пользователей, оставшимся придется попытаться подключиться еще раз. 
-    */
     listen(listener, 5);
     
     std::cout << "Server is runnig" << std::endl;
@@ -415,27 +409,26 @@ int main(int argc, char* argv[])
             exit(1);
         }
         //Если сервер находился в простое 1 час, отключить всех клиентов и выключить сервер
-        else if(ready == 0){
+        if(ready == 0){
             Event_DisconnectAll();
             break;
         }
-        else {
-            if(pfds[0].revents & POLLIN){
-                //Сработал дескриптор слушающего сокета
 
-                clock_t start = clock();
+        if(pfds[0].revents & POLLIN){
 
-                Event_AcceptNewClient(listener);
+            clock_t start = clock();
 
-                clock_t end = clock();
-                double seconds = (double)(end - start) / CLOCKS_PER_SEC;
+            Event_AcceptNewClient(listener);
 
-                std::cout << "Client connection time: " << seconds << std::endl;
+            clock_t end = clock();
 
-            }
+            double seconds = (double)(end - start) / CLOCKS_PER_SEC;
 
-            Event_ClientProcessing();
-        } 
+            std::cout << "Client connection time: " << seconds << std::endl;
+
+        }
+
+        Event_ClientProcessing();
          
         std::cout << "end\n\n" << std::endl;
     }
