@@ -144,7 +144,6 @@ void DisconnectClient(std::string client_src_name, ClientInfo &client_data){
         clients.erase(client_src_name);
 
         num_clients--;
-        //при отключении одного клиента количество дескрипторов, которые слушает poll, уменьшается на 2, т.е. -1 сокет и -1 таймер
         pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(num_clients*2+1));
 }
 
@@ -215,7 +214,6 @@ void PrintInfoAboutPoll(const std::string client_src_name, const ClientInfo &cli
 
 void ForwardMessage(std::string src_username, std::string dst_username,  Command *recv_command){
 
-
     std::cout << src_username << " -> " << dst_username << ": message sended, bytes " 
         << send(pfds[clients[dst_username].c_socket_pos].fd, recv_command, recv_command->len, 0) << std::endl;
 
@@ -237,22 +235,26 @@ void ForwardMessage(std::string src_username, std::string dst_username,  Command
     
 }
 
-void ForwardReply(std::string src_username, std::string dst_username, Command *answer){
-    std::cout << src_username << " -> " << dst_username << ": message sended, bytes " 
-        << send(pfds[clients[dst_username].c_socket_pos].fd, answer, answer->len, 0) << std::endl;
-                            
-    close(clients[src_username].timers_queue.front());
+void PopTimerAndComand(std::string username){
+    close(clients[username].timers_queue.front());
 
-    clients[src_username].timers_queue.pop();
+    clients[username].timers_queue.pop();
     
-    if(!clients[src_username].timers_queue.empty()){
-        pfds[clients[src_username].c_timer_pos].fd = clients[src_username].timers_queue.front();
+    if(!clients[username].timers_queue.empty()){
+        pfds[clients[username].c_timer_pos].fd = clients[username].timers_queue.front();
     }
     else{
-        pfds[clients[src_username].c_timer_pos].fd = -1;
+        pfds[clients[username].c_timer_pos].fd = -1;
     }
 
-    clients[src_username].commands_queue.pop();
+    clients[username].commands_queue.pop();
+}
+
+void ForwardReply(std::string src_username, std::string dst_username, Command *answer){
+    std::cout << src_username << " -> " << dst_username << ": message sended, bytes " 
+        << send(pfds[clients[dst_username].c_socket_pos].fd, answer, answer->len, 0) << std::endl;         
+    
+    PopTimerAndComand(src_username);
 }
 
 void SaveMessage(const std::string src_username, std::string dst_username, Command *&recv_command){
@@ -320,7 +322,6 @@ void Event_ClientProcessing(){
                 if(dst_username.length() > USERNAME_MAX_LEN){dst_username = dst_username.substr(0, USERNAME_MAX_LEN);} 
 
                 if(client_src_name.find("unind_user_") != std::string::npos){
-                // if(src_username != client_src_name){
                     IdentifyUser(client_src_name, client_data, client_data.current_command);
                 }
                 
@@ -341,7 +342,8 @@ void Event_ClientProcessing(){
                     continue;
                 }
 
-                clients[src_username].commands_queue.pop();
+                PopTimerAndComand(src_username);
+
             }
         }
 
