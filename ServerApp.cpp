@@ -91,7 +91,6 @@ void Event_AcceptNewClient(int listener){
     int sock = accept(listener, NULL, NULL);
 
     num_clients++;
-    //при подключении одного клиента количество дескрипторов, которые слушает poll, увеличивается на 2, т.е. +1 сокет и +1 таймер
     pfds = (pollfd*)realloc(pfds, sizeof(pollfd)*(num_clients*2+1));
 
     pfds[num_clients*2-1].fd = sock;
@@ -120,10 +119,11 @@ void Event_AcceptNewClient(int listener){
 
 void DisconnectClient(std::string client_src_name, ClientInfo &client_data){
     std::cout << "User "<< client_src_name << " disconnected" << std:: endl;
+        pollfd *socket_pfd = &pfds[client_data.c_socket_pos];
+        pollfd *timer_pfd = &pfds[client_data.c_timer_pos];
+        close(socket_pfd->fd);
 
-        close(pfds[client_data.c_socket_pos].fd);
-
-        close(pfds[client_data.c_timer_pos].fd);
+        close(timer_pfd->fd);
 
         while(!client_data.commands_queue.empty()){
             save(client_src_name, client_data.commands_queue.front());
@@ -134,11 +134,11 @@ void DisconnectClient(std::string client_src_name, ClientInfo &client_data){
 
         clients[sock_to_name[pfds[num_clients*2-1].fd]].c_socket_pos = client_data.c_socket_pos;
         clients[sock_to_name[pfds[num_clients*2-1].fd]].c_timer_pos = client_data.c_timer_pos;
-        int sock_to_delete = pfds[client_data.c_socket_pos].fd;
+        int sock_to_delete = socket_pfd->fd;
         
 
-        pfds[client_data.c_socket_pos] = pfds[num_clients*2-1];
-        pfds[client_data.c_timer_pos] = pfds[num_clients*2];
+        *socket_pfd = pfds[num_clients*2-1];
+        *timer_pfd = pfds[num_clients*2];
         
         sock_to_name.erase(sock_to_delete);
         clients.erase(client_src_name);
@@ -155,10 +155,11 @@ void Event_DisconnectAll(){
 
 bool AcceptCommand( ClientInfo &client_data){
 
+    pollfd *socket_pfd = &pfds[client_data.c_socket_pos];
     int recv_bytes;
 
     if(client_data.head_recv_bytes != HEADER_LEN){
-        recv_bytes = recv(pfds[client_data.c_socket_pos].fd, (char*)client_data.current_command+client_data.head_recv_bytes, HEADER_LEN-client_data.head_recv_bytes, 0);
+        recv_bytes = recv(socket_pfd->fd, (char*)client_data.current_command+client_data.head_recv_bytes, HEADER_LEN-client_data.head_recv_bytes, 0);
         if (recv_bytes == -1){
             perror("recv1");
             exit(1);
@@ -170,10 +171,9 @@ bool AcceptCommand( ClientInfo &client_data){
             client_data.current_command = (Command*)realloc(client_data.current_command, client_data.current_command->len);
         }
     }
-    else if(client_data.message_recv_bytes != 
-                                            (client_data.current_command->len)-HEADER_LEN){
+    else if(client_data.message_recv_bytes != (client_data.current_command->len)-HEADER_LEN){
 
-        recv_bytes = recv(pfds[client_data.c_socket_pos].fd, ((char*)client_data.current_command->message)+client_data.message_recv_bytes, (client_data.current_command->len-HEADER_LEN)-client_data.message_recv_bytes, 0);
+        recv_bytes = recv(socket_pfd->fd, ((char*)client_data.current_command->message)+client_data.message_recv_bytes, (client_data.current_command->len-HEADER_LEN)-client_data.message_recv_bytes, 0);
 
         if (recv_bytes == -1){
             perror("recv2");
@@ -184,11 +184,13 @@ bool AcceptCommand( ClientInfo &client_data){
     
         if(client_data.message_recv_bytes == client_data.current_command->len-HEADER_LEN){
 
-            std::string src_username = client_data.current_command->src_username;
-            if(src_username.length() > 8){src_username = src_username.substr(0, 8);} 
+            char bufer[USERNAME_MAX_LEN+1];
 
-            std::string dst_username = client_data.current_command->dst_username;
-            if(dst_username.length() > 8){dst_username = dst_username.substr(0, 8);} 
+            strncat(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+            std::string src_username = bufer;
+            bufer[0] = 0;
+            strncat(bufer, client_data.current_command->dst_username, USERNAME_MAX_LEN);
+            std::string dst_username = bufer;
 
             std::cout << "TYPE: " << client_data.current_command->type << std::endl;
             std::cout << "SRC: " << src_username << std::endl;
@@ -262,9 +264,8 @@ void SaveMessage(const std::string src_username, std::string dst_username, Comma
 
     save(dst_username, recv_command);
 
-    std::swap(recv_command->dst_username, recv_command->src_username); //для отправки ответа клиенту отправителю от лица неподключенного клиента получателя 
-
-    recv_command = (Command*)realloc(recv_command, HEADER_LEN+3);//на заголовок и сообщение/ответ "300"
+    std::swap(recv_command->dst_username, recv_command->src_username); 
+    recv_command = (Command*)realloc(recv_command, HEADER_LEN+3);
 
     memcpy(recv_command->message, "300", 3);
     recv_command->len = HEADER_LEN+3;
@@ -276,11 +277,13 @@ void SaveMessage(const std::string src_username, std::string dst_username, Comma
 }
 
 void IdentifyUser(const std::string client_src_name, ClientInfo &client_data, Command *recv_command){
-    std::string src_username = recv_command->src_username;
+    pollfd *socket_pfd = &pfds[client_data.c_socket_pos];
+    char bufer[USERNAME_MAX_LEN+1];
 
-    if(src_username.length()>8){src_username = src_username.substr(0,8); std::cout << src_username << std::endl;}
+    strncat(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+    std::string src_username = bufer;
 
-    sock_to_name.erase(pfds[client_data.c_socket_pos].fd);
+    sock_to_name.erase(socket_pfd->fd);
 
     ClientInfo &current_client = clients[src_username];
 
@@ -290,7 +293,7 @@ void IdentifyUser(const std::string client_src_name, ClientInfo &client_data, Co
     current_client.head_recv_bytes = 0;
     current_client.message_recv_bytes = 0;
 
-    sock_to_name[pfds[client_data.c_socket_pos].fd] = src_username;
+    sock_to_name[socket_pfd->fd] = src_username;
 
     clients.erase(client_src_name);
 
@@ -305,21 +308,24 @@ void Event_ClientProcessing(){
         std::string &client_src_name = sock_to_name[pfds[sock_num].fd] ;
         ClientInfo &client_data = clients[client_src_name];
         PrintInfoAboutPoll(client_src_name, client_data);
+        pollfd *socket_pfd = &pfds[client_data.c_socket_pos];
+        pollfd *timer_pfd = &pfds[client_data.c_timer_pos];
 
-        if(pfds[client_data.c_socket_pos].revents & POLLRDHUP || pfds[client_data.c_socket_pos].revents & POLLHUP || pfds[client_data.c_timer_pos].revents & POLLIN){
+        if(socket_pfd->revents & POLLRDHUP || socket_pfd->revents & POLLHUP || timer_pfd->revents & POLLIN){
             DisconnectClient(client_src_name, client_data);
             sock_num = sock_num-2;
             continue;
         }   
 
-        if(pfds[client_data.c_socket_pos].revents & POLLIN){
-
+        if(socket_pfd->revents & POLLIN){
             if(AcceptCommand(client_data)){
-                std::string src_username = client_data.current_command->src_username;
-                if(src_username.length() > USERNAME_MAX_LEN){src_username = src_username.substr(0, USERNAME_MAX_LEN);} 
+                char bufer[USERNAME_MAX_LEN+1];
 
-                std::string dst_username = client_data.current_command->dst_username;
-                if(dst_username.length() > USERNAME_MAX_LEN){dst_username = dst_username.substr(0, USERNAME_MAX_LEN);} 
+                strncat(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+                std::string src_username = bufer;
+                bufer[0] = 0;
+                strncat(bufer, client_data.current_command->dst_username, USERNAME_MAX_LEN);
+                std::string dst_username = bufer;
 
                 if(client_src_name.find("unind_user_") != std::string::npos){
                     IdentifyUser(client_src_name, client_data, client_data.current_command);
@@ -410,7 +416,6 @@ int main(int argc, char* argv[])
             perror("Poll");
             exit(1);
         }
-        //Если сервер находился в простое 1 час, отключить всех клиентов и выключить сервер
         if(ready == 0){
             Event_DisconnectAll();
             break;
