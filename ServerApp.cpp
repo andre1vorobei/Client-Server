@@ -185,11 +185,12 @@ bool AcceptCommand( ClientInfo &client_data){
         if(client_data.message_recv_bytes == client_data.current_command->len-HEADER_LEN){
 
             char bufer[USERNAME_MAX_LEN+1];
-
-            strncat(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+            strncpy(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+            bufer[USERNAME_MAX_LEN] = 0;
             std::string src_username = bufer;
-            bufer[0] = 0;
-            strncat(bufer, client_data.current_command->dst_username, USERNAME_MAX_LEN);
+
+            strncpy(bufer, client_data.current_command->dst_username, USERNAME_MAX_LEN);
+            bufer[USERNAME_MAX_LEN] = 0;
             std::string dst_username = bufer;
 
             std::cout << "TYPE: " << client_data.current_command->type << std::endl;
@@ -280,7 +281,8 @@ void IdentifyUser(const std::string client_src_name, ClientInfo &client_data, Co
     pollfd *socket_pfd = &pfds[client_data.c_socket_pos];
     char bufer[USERNAME_MAX_LEN+1];
 
-    strncat(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+    strncpy(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+    bufer[USERNAME_MAX_LEN] = 0;
     std::string src_username = bufer;
 
     sock_to_name.erase(socket_pfd->fd);
@@ -321,12 +323,14 @@ void Event_ClientProcessing(){
             if(AcceptCommand(client_data)){
                 char bufer[USERNAME_MAX_LEN+1];
 
-                strncat(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+                strncpy(bufer, client_data.current_command->src_username, USERNAME_MAX_LEN);
+                bufer[USERNAME_MAX_LEN] = 0;
                 std::string src_username = bufer;
-                bufer[0] = 0;
-                strncat(bufer, client_data.current_command->dst_username, USERNAME_MAX_LEN);
-                std::string dst_username = bufer;
 
+                strncpy(bufer, client_data.current_command->dst_username, USERNAME_MAX_LEN);
+                bufer[USERNAME_MAX_LEN] = 0;
+                std::string dst_username = bufer;
+                
                 if(client_src_name.find("unind_user_") != std::string::npos){
                     IdentifyUser(client_src_name, client_data, client_data.current_command);
                 }
@@ -347,7 +351,8 @@ void Event_ClientProcessing(){
                     SaveMessage(src_username, dst_username, client_data.current_command);   
                     continue;
                 }
-
+                
+                //Если пришел ответ, а клиент, которому предназначался этот ответ отключился
                 PopTimerAndComand(src_username);
 
             }
